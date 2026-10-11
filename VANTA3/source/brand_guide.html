@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VANTA3 Brand Guide</title>
+<style>
+  @page { size: 297mm 167mm; margin: 0; }
+  :root {
+    --violet: #5B3DF5; --aqua: #0FB5A5; --coral: #FF5A4E; --saffron: #FFB224; --lavender: #A797FA;
+    --ink: #1B1838; --night: #14112F; --night2: #221E4A; --mist: #F5F4FB; --muted: #66638A; --line: #E4E2F1;
+    --aquaInk: #097A70; --coralInk: #D13A2F; --saffronInk: #9E6400;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Calibri, Carlito, Arial, sans-serif; color: var(--ink); background: var(--mist); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1, h2, h3, .serif { font-family: Cambria, Caladea, Georgia, serif; }
+  .page { width: 297mm; height: 167mm; padding: 14mm 16mm 10mm; position: relative; page-break-after: always; overflow: hidden; background: var(--mist); }
+  .page.dark { background: var(--night); color: #fff; }
+  .kicker { font-size: 9pt; font-weight: 700; letter-spacing: .18em; color: var(--violet); text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+  .dark .kicker { color: var(--aqua); }
+  .kicker::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--coral); display: inline-block; }
+  h2 { font-size: 22pt; margin: 4px 0 10px; }
+  .foot { position: absolute; left: 16mm; right: 16mm; bottom: 6mm; font-size: 7.5pt; color: #9C99BC; display: flex; justify-content: space-between; }
+  .grid { display: grid; gap: 4mm; }
+  .card { background: #fff; border-radius: 3mm; padding: 4mm 5mm; box-shadow: 0 1px 6px rgba(42,33,96,.08); }
+  p, li { font-size: 9.5pt; line-height: 1.4; }
+  .muted { color: var(--muted); }
+  /* cover */
+  .cover h1 { font-size: 44pt; margin: 22mm 0 4mm; line-height: 1.05; }
+  .cover .sub { font-size: 13pt; color: #C9C5EE; max-width: 140mm; }
+  .ring { position: absolute; border-radius: 50%; border: 1.5px solid rgba(91,61,245,.55); }
+  .brand { font-family: Cambria, Caladea, serif; font-weight: 700; letter-spacing: .25em; font-size: 14pt; }
+  .brand b { color: var(--coral); }
+  /* swatches */
+  .sw { border-radius: 3mm; overflow: hidden; background: #fff; box-shadow: 0 1px 6px rgba(42,33,96,.08); }
+  .sw .chip { height: 22mm; }
+  .sw .meta { padding: 3mm 4mm; font-size: 8.5pt; line-height: 1.35; }
+  .sw .meta strong { font-size: 10pt; display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 8.5pt; }
+  th { text-align: left; background: var(--night); color: #fff; padding: 2mm 3mm; font-weight: 700; }
+  td { padding: 1.8mm 3mm; border-bottom: 1px solid var(--line); background: #fff; vertical-align: top; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 700; font-size: 8pt; }
+  .ok { background: #DCF5F2; color: var(--aquaInk); }
+  .no { background: #FFE7E4; color: var(--coralInk); }
+  img.shot { width: 100%; border-radius: 2mm; display: block; box-shadow: 0 2px 10px rgba(20,17,47,.18); }
+</style>
+</head>
+<body>
+
+<!-- 1 Cover -->
+<section class="page dark cover">
+  <div class="ring" style="width:190mm;height:190mm;right:-40mm;top:-30mm"></div>
+  <div class="ring" style="width:140mm;height:140mm;right:-15mm;top:-5mm;opacity:.7"></div>
+  <div class="ring" style="width:90mm;height:90mm;right:10mm;top:20mm;background:#221E4A;border-color:rgba(167,151,250,.5)"></div>
+  <div style="position:absolute;right:96mm;top:62mm;width:9mm;height:9mm;border-radius:50%;background:var(--coral)"></div>
+  <div class="brand">VANTA<b>3</b></div>
+  <h1>Brand &amp; Design<br>Guide</h1>
+  <p class="sub">The visual identity, typography, layout system, chart language and animation principles behind the VANTA3 business presentation template.</p>
+  <p style="position:absolute;bottom:14mm;font-size:9pt;color:#8E8AB8">Version 1.0 &nbsp;|&nbsp; October 2026 &nbsp;|&nbsp; 60-slide 16:9 PowerPoint template</p>
+</section>
+
+<!-- 2 Palette -->
+<section class="page">
+  <div class="kicker">01 · Colour</div>
+  <h2>A violet-led palette with three vivid signals</h2>
+  <div class="grid" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 4mm">
+    <div class="sw"><div class="chip" style="background:#5B3DF5"></div><div class="meta"><strong>Vanta Violet</strong>#5B3DF5 · RGB 91 61 245<br><span class="muted">Primary. Titles accents, hero data, key series. ~60% of colour weight.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#0FB5A5"></div><div class="meta"><strong>Signal Aqua</strong>#0FB5A5 · RGB 15 181 165<br><span class="muted">Secondary. Growth, positive variance, second series.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#FF5A4E"></div><div class="meta"><strong>Ember Coral</strong>#FF5A4E · RGB 255 90 78<br><span class="muted">Accent. Emphasis, the one number to remember, risks.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#FFB224"></div><div class="meta"><strong>Saffron</strong>#FFB224 · RGB 255 178 36<br><span class="muted">Accent. Fourth series, highlights on dark slides.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#A797FA"></div><div class="meta"><strong>Lavender</strong>#A797FA · RGB 167 151 250<br><span class="muted">Supporting tint. Comparison bars, prior-period data.</span></div></div>
+  </div>
+  <div class="grid" style="grid-template-columns: repeat(5, 1fr) ; margin-bottom: 4mm">
+    <div class="sw"><div class="chip" style="background:#14112F"></div><div class="meta"><strong>Night</strong>#14112F<br><span class="muted">Dark backgrounds: cover, chapters, close.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#1B1838"></div><div class="meta"><strong>Ink</strong>#1B1838<br><span class="muted">All body text and titles on light slides.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#F5F4FB;border-bottom:1px solid #E4E2F1"></div><div class="meta"><strong>Mist</strong>#F5F4FB<br><span class="muted">Light slide background; cards sit on it in white.</span></div></div>
+    <div class="sw"><div class="chip" style="background:#66638A"></div><div class="meta"><strong>Slate</strong>#66638A<br><span class="muted">Captions, axis labels, secondary text.</span></div></div>
+    <div class="sw"><div class="chip" style="display:flex"><span style="flex:1;background:#097A70"></span><span style="flex:1;background:#D13A2F"></span><span style="flex:1;background:#9E6400"></span></div><div class="meta"><strong>Text-safe accents</strong>#097A70 · #D13A2F · #9E6400<br><span class="muted">Aqua, coral and saffron for text on light surfaces.</span></div></div>
+  </div>
+  <div class="grid" style="grid-template-columns: 1.4fr 1fr">
+    <div class="card"><strong class="serif">Why these colours</strong>
+      <p class="muted" style="margin:2mm 0 0">Violet signals intelligence and premium positioning without the sameness of corporate blue; aqua reads as growth and trust; coral provides one confident point of emphasis. The vivid hues sit on a cool, near-white mist and a deep night tone, so contrast stays high without harshness.</p></div>
+    <div class="card"><strong class="serif">Contrast (WCAG 2.1)</strong>
+      <p style="margin:2mm 0 0">Ink on white 17.0:1 · Violet on white 6.1:1 · Aqua-text on white 5.2:1 · Coral-text on white 4.8:1 · Saffron-text on white 4.9:1 · Saffron on Night 10.1:1. Chart labels switch automatically to Ink where white text would fall below 4.5:1.</p></div>
+  </div>
+  <div class="foot"><span>VANTA3 Brand &amp; Design Guide</span><span>2</span></div>
+</section>
+
+<!-- 3 Typography & layout -->
+<section class="page">
+  <div class="kicker">02 · Typography &amp; layout</div>
+  <h2>Editorial serif headlines, clean sans-serif data</h2>
+  <div class="grid" style="grid-template-columns: 1.15fr 1fr">
+    <div class="card">
+      <table>
+        <tr><th>Role</th><th>Font</th><th>Size / weight</th><th>Colour</th></tr>
+        <tr><td>Cover title</td><td class="serif">Cambria</td><td>50 pt bold</td><td>White</td></tr>
+        <tr><td>Chapter title</td><td class="serif">Cambria</td><td>44 pt bold · number 96 pt Lavender</td><td>White</td></tr>
+        <tr><td>Slide title</td><td class="serif">Cambria</td><td>30 pt bold, left-aligned, one line</td><td>Ink</td></tr>
+        <tr><td>Kicker</td><td>Calibri</td><td>11 pt bold caps, +2 pt tracking, coral dot</td><td>Violet / Aqua on dark</td></tr>
+        <tr><td>Hero number</td><td class="serif">Cambria</td><td>26–80 pt bold</td><td>Violet or accent</td></tr>
+        <tr><td>Card heading</td><td class="serif">Cambria / Calibri</td><td>15–20 pt bold</td><td>Ink</td></tr>
+        <tr><td>Body</td><td>Calibri</td><td>13–16 pt regular</td><td>Ink / Slate</td></tr>
+        <tr><td>Chart text</td><td>Calibri</td><td>Axis 11 pt · labels 9–10 pt bold</td><td>Slate / Ink</td></tr>
+        <tr><td>Captions, sources</td><td>Calibri</td><td>10–12 pt, italic for notes</td><td>Slate</td></tr>
+      </table>
+      <p class="muted" style="margin:3mm 0 0;font-size:8.5pt">Cambria and Calibri ship with Microsoft Office on Windows and Mac and are available in PowerPoint for the web, so the deck renders without font embedding or substitution.</p>
+    </div>
+    <div class="card">
+      <strong class="serif">Grid &amp; spacing</strong>
+      <ul style="margin:2mm 0 0;padding-left:4mm">
+        <li>16:9 widescreen, 13.33 × 7.5 in. Outer margin 0.6 in on all sides.</li>
+        <li>Content zone 12.13 in wide, from 1.72 in (below the title) to 6.78 in.</li>
+        <li>Standard gutter 0.3 in between cards; 2, 3 and 4-column splits.</li>
+        <li>Title block: kicker at 0.38 in, title at 0.72 in — identical on every content slide.</li>
+        <li>Footer line and slide number on the layout, 9 pt, never edited per slide.</li>
+      </ul>
+      <strong class="serif" style="display:block;margin-top:3mm">Shapes &amp; components</strong>
+      <ul style="margin:2mm 0 0;padding-left:4mm">
+        <li>Cards: white, 0.1 in corner radius, soft 9% violet-tinted shadow.</li>
+        <li>Insight panels: Lavender-tint fill, no shadow, serif heading.</li>
+        <li>Icons: Lucide line icons inside tinted circles.</li>
+        <li>Signature motif: orbit rings and a coral “signal dot”.</li>
+        <li>No accent stripes, no underlines beneath titles.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="foot"><span>VANTA3 Brand &amp; Design Guide</span><span>3</span></div>
+</section>
+
+<!-- 4 Charts -->
+<section class="page">
+  <div class="kicker">03 · Data visualisation</div>
+  <h2>Charts are native, editable and quiet</h2>
+  <div class="grid" style="grid-template-columns: 1.25fr 1fr">
+    <img class="shot" src="../preview/slide-58-kpi-dashboard.jpg" alt="KPI dashboard slide">
+    <div class="card">
+      <strong class="serif">Series order</strong>
+      <div style="display:flex;gap:2mm;margin:2mm 0 3mm">
+        <span style="flex:1;height:7mm;border-radius:1.5mm;background:#5B3DF5"></span><span style="flex:1;height:7mm;border-radius:1.5mm;background:#0FB5A5"></span><span style="flex:1;height:7mm;border-radius:1.5mm;background:#FF5A4E"></span><span style="flex:1;height:7mm;border-radius:1.5mm;background:#FFB224"></span><span style="flex:1;height:7mm;border-radius:1.5mm;background:#A797FA"></span><span style="flex:1;height:7mm;border-radius:1.5mm;background:#8E8BAE"></span>
+      </div>
+      <ul style="margin:0;padding-left:4mm">
+        <li>Every chart is a native PowerPoint chart with its data embedded (right-click › Edit Data).</li>
+        <li>Light horizontal gridlines (#E7E5F3), no vertical gridlines, no chart borders.</li>
+        <li>Data labels replace axes where precise values matter.</li>
+        <li>Highlight one category in Violet or Coral; keep context in Lavender.</li>
+        <li>Prior period in Lavender, current period in Violet.</li>
+        <li>Waterfall, funnel and range charts use a hidden helper series — keep it invisible.</li>
+        <li>State units in the chart heading (“$M”, “%”) and mark forecasts with “F”.</li>
+      </ul>
+      <p class="muted" style="margin:2mm 0 0;font-size:8.5pt">53 charts across 13 forms: column, bar, stacked, waterfall, funnel, line, area, combo, donut, radar, scatter, bubble and tornado.</p>
+    </div>
+  </div>
+  <div class="foot"><span>VANTA3 Brand &amp; Design Guide</span><span>4</span></div>
+</section>
+
+<!-- 5 Animation -->
+<section class="page">
+  <div class="kicker">04 · Motion</div>
+  <h2>Animation principles</h2>
+  <div class="grid" style="grid-template-columns: 1.2fr 1fr">
+    <div class="card">
+      <table>
+        <tr><th>Element</th><th>Effect</th><th>Timing</th></tr>
+        <tr><td>Kicker + title</td><td>Fade, with slide entry</td><td>0.5 s, starts immediately</td></tr>
+        <tr><td>Cards &amp; panels</td><td>Fade or Wipe from left / right</td><td>0.35–0.5 s, 90–150 ms stagger</td></tr>
+        <tr><td>Column charts</td><td>Wipe from bottom (bars grow)</td><td>0.9–1.2 s</td></tr>
+        <tr><td>Bar, line, area, donut charts</td><td>Wipe from left (reveals in reading order)</td><td>0.9–1.8 s</td></tr>
+        <tr><td>Scatter, bubble, radar</td><td>Subtle Zoom (60% → 100%) with fade</td><td>0.6 s</td></tr>
+        <tr><td>Tables</td><td>Wipe from top</td><td>0.6–0.9 s</td></tr>
+        <tr><td>KPI hero numbers</td><td>Subtle Zoom</td><td>0.45–0.6 s</td></tr>
+        <tr><td>Timelines &amp; Gantt</td><td>Axis wipes first, then items step by step</td><td>0.3–0.5 s per item</td></tr>
+        <tr><td>Slide transition</td><td>Fade (content) · Push up (chapters)</td><td>Medium / slow</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <strong class="serif">Rules</strong>
+      <ul style="margin:2mm 0 0;padding-left:4mm">
+        <li>Builds play automatically after the slide appears (“With / After previous”), so the deck runs without extra clicks. Most slides finish within 3 seconds, and none takes longer than 5.2 seconds.</li>
+        <li>Order follows the argument: headline → evidence (chart) → interpretation (insight panel).</li>
+        <li>Only four effects: Fade, Wipe, Zoom (subtle) and Appear. No bounce, spin, fly-in or emphasis loops.</li>
+        <li>Each object enters once; footers, layout art and slide numbers never animate.</li>
+        <li>Charts animate as a whole so they stay fully editable. For a series-by-series build, use Animation Pane › Effect Options › Sequence › By Series.</li>
+        <li>To present without motion, use Slide Show › Set Up Slide Show › Show without animation.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="foot"><span>VANTA3 Brand &amp; Design Guide</span><span>5</span></div>
+</section>
+
+<!-- 6 Do & don't -->
+<section class="page">
+  <div class="kicker">05 · Usage</div>
+  <h2>Do and don't</h2>
+  <div class="grid" style="grid-template-columns: 1fr 1fr 1fr">
+    <div class="card"><span class="pill ok">Do</span><p>Write action titles that state the finding (“Asia-Pacific is our fastest-growing large region”), not topics (“Regional data”).</p><span class="pill no">Don't</span><p>Repeat a title, or end a title with a full stop.</p></div>
+    <div class="card"><span class="pill ok">Do</span><p>Keep one dominant colour per slide and use Coral for a single point of emphasis.</p><span class="pill no">Don't</span><p>Introduce new hues, gradients or stock-photo backgrounds.</p></div>
+    <div class="card"><span class="pill ok">Do</span><p>Build visuals from editable shapes, icons, charts and typography.</p><span class="pill no">Don't</span><p>Use any image of people — photographs, portraits, silhouettes, AI-generated figures or illustrated characters.</p></div>
+    <div class="card"><span class="pill ok">Do</span><p>Edit numbers in the chart's data sheet so labels and bars stay in sync.</p><span class="pill no">Don't</span><p>Paste charts as pictures or type values over a chart.</p></div>
+    <div class="card"><span class="pill ok">Do</span><p>Keep body text at 13 pt or larger and captions at 10 pt or larger.</p><span class="pill no">Don't</span><p>Shrink text to fit — split the content across two slides instead.</p></div>
+    <div class="card"><span class="pill ok">Do</span><p>Label illustrative figures clearly; the footer reads “Illustrative data” until you replace it.</p><span class="pill no">Don't</span><p>Present illustrative figures as actual results.</p></div>
+  </div>
+  <div class="foot"><span>VANTA3 Brand &amp; Design Guide</span><span>6</span></div>
+</section>
+
+</body>
+</html>

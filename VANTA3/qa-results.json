@@ -1,0 +1,717 @@
+{
+ "file": "VANTA3.pptx",
+ "slide_count": 60,
+ "slide_size_in": [
+  13.333333333333334,
+  7.5
+ ],
+ "charts_total": 53,
+ "charts_with_embedded_workbook": 53,
+ "chart_types": {
+  "barChart-col-clustered": 19,
+  "barChart-bar-clustered": 5,
+  "areaChart": 3,
+  "barChart-col-stacked": 3,
+  "doughnutChart": 8,
+  "lineChart": 14,
+  "barChart-bar-stacked": 4,
+  "scatterChart": 1,
+  "radarChart": 1,
+  "bubbleChart": 1
+ },
+ "slides_with_charts": 39,
+ "slides_with_animation": 60,
+ "slides_with_transition": 60,
+ "entrance_effects_total": 1214,
+ "max_build_seconds": 5.2,
+ "media_files": 46,
+ "problems": [],
+ "per_slide": [
+  {
+   "slide": 1,
+   "transition": "fade",
+   "entrance_effects": 19,
+   "charts": 0,
+   "build_seconds": 3.1,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 2,
+   "transition": "fade",
+   "entrance_effects": 33,
+   "charts": 0,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 3,
+   "transition": "fade",
+   "entrance_effects": 26,
+   "charts": 1,
+   "build_seconds": 2.8,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 4,
+   "transition": "fade",
+   "entrance_effects": 23,
+   "charts": 1,
+   "build_seconds": 3.4,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 5,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 6,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 1,
+   "build_seconds": 3.0,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 7,
+   "transition": "fade",
+   "entrance_effects": 9,
+   "charts": 1,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 8,
+   "transition": "fade",
+   "entrance_effects": 11,
+   "charts": 1,
+   "build_seconds": 2.6,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 9,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 1,
+   "build_seconds": 2.5,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 10,
+   "transition": "fade",
+   "entrance_effects": 16,
+   "charts": 1,
+   "build_seconds": 3.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 11,
+   "transition": "fade",
+   "entrance_effects": 9,
+   "charts": 1,
+   "build_seconds": 2.7,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 12,
+   "transition": "fade",
+   "entrance_effects": 21,
+   "charts": 1,
+   "build_seconds": 2.9,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 13,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 1,
+   "build_seconds": 2.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 14,
+   "transition": "fade",
+   "entrance_effects": 9,
+   "charts": 2,
+   "build_seconds": 2.8,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 15,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 16,
+   "transition": "fade",
+   "entrance_effects": 23,
+   "charts": 0,
+   "build_seconds": 3.2,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 17,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 1,
+   "build_seconds": 3.8,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 18,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 1,
+   "build_seconds": 2.3,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 19,
+   "transition": "fade",
+   "entrance_effects": 26,
+   "charts": 1,
+   "build_seconds": 2.3,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 20,
+   "transition": "fade",
+   "entrance_effects": 21,
+   "charts": 1,
+   "build_seconds": 2.6,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 21,
+   "transition": "fade",
+   "entrance_effects": 26,
+   "charts": 3,
+   "build_seconds": 3.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 22,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 1,
+   "build_seconds": 2.7,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 23,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 24,
+   "transition": "fade",
+   "entrance_effects": 22,
+   "charts": 1,
+   "build_seconds": 4.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 25,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 1,
+   "build_seconds": 3.3,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 26,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 1,
+   "build_seconds": 2.7,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 27,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 1,
+   "build_seconds": 3.3,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 28,
+   "transition": "fade",
+   "entrance_effects": 27,
+   "charts": 1,
+   "build_seconds": 2.0,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 29,
+   "transition": "fade",
+   "entrance_effects": 21,
+   "charts": 1,
+   "build_seconds": 2.7,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 30,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 1,
+   "build_seconds": 3.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 31,
+   "transition": "fade",
+   "entrance_effects": 9,
+   "charts": 1,
+   "build_seconds": 2.6,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 32,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 33,
+   "transition": "fade",
+   "entrance_effects": 30,
+   "charts": 4,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 34,
+   "transition": "fade",
+   "entrance_effects": 20,
+   "charts": 1,
+   "build_seconds": 3.5,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 35,
+   "transition": "fade",
+   "entrance_effects": 41,
+   "charts": 1,
+   "build_seconds": 3.5,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 36,
+   "transition": "fade",
+   "entrance_effects": 16,
+   "charts": 0,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 37,
+   "transition": "fade",
+   "entrance_effects": 16,
+   "charts": 1,
+   "build_seconds": 3.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 38,
+   "transition": "fade",
+   "entrance_effects": 14,
+   "charts": 1,
+   "build_seconds": 2.3,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 39,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 40,
+   "transition": "fade",
+   "entrance_effects": 7,
+   "charts": 1,
+   "build_seconds": 2.3,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 41,
+   "transition": "fade",
+   "entrance_effects": 19,
+   "charts": 1,
+   "build_seconds": 3.3,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 42,
+   "transition": "fade",
+   "entrance_effects": 43,
+   "charts": 0,
+   "build_seconds": 2.9,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 43,
+   "transition": "fade",
+   "entrance_effects": 11,
+   "charts": 1,
+   "build_seconds": 2.5,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 44,
+   "transition": "fade",
+   "entrance_effects": 30,
+   "charts": 1,
+   "build_seconds": 3.1,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 45,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 46,
+   "transition": "fade",
+   "entrance_effects": 16,
+   "charts": 1,
+   "build_seconds": 3.4,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 47,
+   "transition": "fade",
+   "entrance_effects": 23,
+   "charts": 1,
+   "build_seconds": 2.7,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 48,
+   "transition": "fade",
+   "entrance_effects": 4,
+   "charts": 0,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 49,
+   "transition": "fade",
+   "entrance_effects": 8,
+   "charts": 1,
+   "build_seconds": 1.9,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 50,
+   "transition": "fade",
+   "entrance_effects": 30,
+   "charts": 4,
+   "build_seconds": 1.8,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 51,
+   "transition": "push",
+   "entrance_effects": 8,
+   "charts": 0,
+   "build_seconds": 1.5,
+   "effect_types": [
+    "fade",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 52,
+   "transition": "fade",
+   "entrance_effects": 38,
+   "charts": 0,
+   "build_seconds": 1.4,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 53,
+   "transition": "fade",
+   "entrance_effects": 26,
+   "charts": 0,
+   "build_seconds": 2.0,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 54,
+   "transition": "fade",
+   "entrance_effects": 45,
+   "charts": 0,
+   "build_seconds": 2.8,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 55,
+   "transition": "fade",
+   "entrance_effects": 41,
+   "charts": 0,
+   "build_seconds": 4.0,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 56,
+   "transition": "fade",
+   "entrance_effects": 18,
+   "charts": 0,
+   "build_seconds": 1.8,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 57,
+   "transition": "fade",
+   "entrance_effects": 42,
+   "charts": 0,
+   "build_seconds": 2.9,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "zoom"
+   ]
+  },
+  {
+   "slide": 58,
+   "transition": "fade",
+   "entrance_effects": 42,
+   "charts": 6,
+   "build_seconds": 4.8,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 59,
+   "transition": "fade",
+   "entrance_effects": 35,
+   "charts": 0,
+   "build_seconds": 5.2,
+   "effect_types": [
+    "fade",
+    "wipe"
+   ]
+  },
+  {
+   "slide": 60,
+   "transition": "fade",
+   "entrance_effects": 17,
+   "charts": 0,
+   "build_seconds": 4.5,
+   "effect_types": [
+    "fade",
+    "wipe",
+    "zoom"
+   ]
+  }
+ ],
+ "libreoffice_roundtrip": {
+  "pages": 60,
+  "pages_with_imported_animation": 60,
+  "imported_entrance_effects": 1214,
+  "pages_with_transition": 60
+ }
+}
