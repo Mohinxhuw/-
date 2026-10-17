@@ -23,12 +23,28 @@ else
 fi
 cd "$DIR/lecture-bot"
 
-if [ ! -f .env ]; then
-  read -rp "Telegram bot token: " TOKEN </dev/tty
-  read -rp "Anthropic API key: " KEY </dev/tty
-  cp .env.example .env
-  sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$TOKEN|; s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=$KEY|" .env
-  chmod 600 .env
+# Ask for the secrets until both look valid. Only the token/key pattern is kept,
+# so pasting extra text around them (for example a whole curl example) still works.
+[ -f .env ] || cp .env.example .env
+chmod 600 .env
+set_env() { grep -v "^$1=" .env > .env.tmp || true; printf '%s=%s\n' "$1" "$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env; }
+if ! grep -qE '^TELEGRAM_BOT_TOKEN=[0-9]+:' .env; then
+  while :; do
+    read -rp "Telegram bot token: " IN </dev/tty
+    TOKEN=$(printf '%s' "$IN" | grep -oE '[0-9]{6,}:[A-Za-z0-9_-]{30,}' | head -1 || true)
+    [ -n "$TOKEN" ] && break
+    echo "   That does not look like a bot token (example 123456789:AAH...). Try again."
+  done
+  set_env TELEGRAM_BOT_TOKEN "$TOKEN"
+fi
+if ! grep -qE '^ANTHROPIC_API_KEY=sk-ant-' .env; then
+  while :; do
+    read -rp "Anthropic API key: " IN </dev/tty
+    KEY=$(printf '%s' "$IN" | grep -oE 'sk-ant-[A-Za-z0-9_-]{20,}' | head -1 || true)
+    [ -n "$KEY" ] && break
+    echo "   That does not look like an Anthropic key (it starts with sk-ant-). Try again."
+  done
+  set_env ANTHROPIC_API_KEY "$KEY"
 fi
 
 echo ">> Building and starting the bot (first build takes several minutes)"
