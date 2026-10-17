@@ -197,6 +197,11 @@ def _clean(result: dict) -> None:
             q["options"] = opts
             good.append(q)
     result["mcq"] = good
+    # The model sometimes copies the transcript's "[mm:ss]" brackets into time fields.
+    items = result.get("sections", []) + result["mcq"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])]
+    for item in items:
+        if isinstance(item.get("time"), str):
+            item["time"] = item["time"].strip(" []")
 
 
 def apply_fixes(segments: list[Segment], fixes: list[dict]) -> list[Segment]:
