@@ -10,7 +10,7 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Poll, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import TelegramError
+from telegram.error import NetworkError, TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
                           PicklePersistence, filters)
 
@@ -317,6 +317,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ---------- startup ----------
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, NetworkError):  # brief connection drops; polling retries on its own
+        log.warning("network error: %s", context.error)
+        return
+    log.error("unhandled error", exc_info=context.error)
+
+
 def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN (see .env.example)")
@@ -339,6 +346,7 @@ def main() -> None:
         | filters.Document.AUDIO | filters.Document.VIDEO, on_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
+    app.add_error_handler(on_error)
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
