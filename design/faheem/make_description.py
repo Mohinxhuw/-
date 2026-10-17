@@ -8,7 +8,7 @@ CUTS = ((276, 296), (318, 338), (360, 380))
 FONTS = "/home/user/-/lecture-bot/fonts"
 W, H = 1280, 720
 
-mark = logo.svg(cuts=CUTS, bg=None, width_ratio=0.92).replace('width="512" height="512"', 'width="420" height="420"')
+mark = logo.svg(cuts=CUTS, bg=None, width_ratio=0.92).replace('width="512" height="512"', 'width="470" height="470"')
 wave = "".join(f'<span style="height:{h}px"></span>' for h in
                (14, 26, 44, 30, 60, 38, 22, 48, 70, 40, 24, 54, 34, 18, 42, 28, 16))
 features = ["ملخص مرتب", "أسئلة اختبار", "بطاقات مراجعة", "ملف PDF"]
@@ -22,15 +22,15 @@ body {{ width: {W}px; height: {H}px; background: {logo.NAVY}; font-family: Cairo
         position: relative; overflow: hidden; }}
 .glow {{ position: absolute; width: 900px; height: 900px; border-radius: 50%; right: -210px; top: -90px;
          background: #1b4d75; }}
-.mark {{ position: absolute; right: 50px; top: 60px; width: 420px; height: 420px; }}
-.name {{ position: absolute; right: 50px; top: 480px; width: 420px; text-align: center;
+.mark {{ position: absolute; right: 40px; top: 36px; width: 470px; height: 470px; }}
+.name {{ position: absolute; right: 40px; top: 500px; width: 470px; text-align: center;
          font-size: 104px; font-weight: 700; line-height: 1; }}
-.copy {{ position: absolute; right: 500px; top: 70px; width: 740px; }}
+.copy {{ position: absolute; right: 540px; width: 700px; top: 78px; text-align: center; }}
 h1 {{ margin: 0; font-size: 108px; line-height: 1.2; font-weight: 700; }}
 h1 b {{ color: {logo.GOLD}; }}
 p {{ margin: 14px 0 0; font-size: 40px; line-height: 1.45; color: #c9d6e2; }}
-.chips {{ margin-top: 26px; width: 600px; }}
-.chips span {{ display: inline-block; margin: 0 0 14px 14px; padding: 4px 24px; border-radius: 30px;
+.chips {{ margin: 30px auto 0; width: 640px; text-align: center; }}
+.chips span {{ display: inline-block; margin: 0 7px 14px; padding: 4px 24px; border-radius: 30px;
                border: 2px solid #4f7597; font-size: 32px; font-weight: 700; color: #fff; }}
 .wave {{ position: absolute; left: 80px; bottom: 70px; height: 70px; display: flex; align-items: center;
          direction: ltr; }}
