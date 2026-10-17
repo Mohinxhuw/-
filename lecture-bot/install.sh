@@ -47,6 +47,27 @@ if ! grep -qE '^ANTHROPIC_API_KEY=sk-ant-' .env; then
   set_env ANTHROPIC_API_KEY "$KEY"
 fi
 
+# Optional: files up to 2 GB through a self-hosted Telegram Bot API server.
+if ! grep -qE '^TELEGRAM_API_ID=' .env; then
+  echo
+  echo "Files bigger than 20 MB need api_id and api_hash from https://my.telegram.org"
+  echo "(API development tools). Press Enter to skip."
+  read -rp "api_id: " API_ID </dev/tty
+  API_ID=$(printf '%s' "$API_ID" | tr -cd '0-9')
+  if [ -n "$API_ID" ]; then
+    while :; do
+      read -rp "api_hash: " IN </dev/tty
+      API_HASH=$(printf '%s' "$IN" | grep -oE '[0-9a-f]{32}' | head -1 || true)
+      [ -n "$API_HASH" ] && break
+      echo "   api_hash is 32 letters and digits. Try again."
+    done
+    set_env TELEGRAM_API_HASH "$API_HASH"
+    set_env TELEGRAM_LOCAL_API_URL "http://telegram-bot-api:8081"
+    set_env COMPOSE_PROFILES "bigfiles"
+  fi
+  set_env TELEGRAM_API_ID "$API_ID"
+fi
+
 echo ">> Building and starting the bot (first build takes several minutes)"
 docker compose up -d --build
 echo ">> Done. Logs: cd $DIR/lecture-bot && docker compose logs -f bot"

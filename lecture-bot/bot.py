@@ -217,6 +217,7 @@ async def _run_job(update: Update, context: ContextTypes.DEFAULT_TYPE, title: st
                 f = await tg_file.get_file()
                 path = work / ("input" + (Path(f.file_path).suffix if f.file_path else ""))
                 await f.download_to_drive(path)
+                _drop_local_copy(f.file_path)
                 source = Source(path=path, title=title)
             images = []
             for file_id, _, mime in images_meta:
@@ -324,6 +325,26 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.error("unhandled error", exc_info=context.error)
 
 
+def _drop_local_copy(file_path: str | None) -> None:
+    """A local Bot API server keeps every downloaded file; remove ours once copied."""
+    if config.TELEGRAM_LOCAL_API_URL and file_path and Path(file_path).is_absolute():
+        Path(file_path).unlink(missing_ok=True)
+
+
+def _leave_cloud_api() -> None:
+    """Telegram requires logOut from its cloud servers once before a bot uses a local Bot API server."""
+    marker = config.DATA_DIR / ".cloud_logged_out"
+    if marker.exists():
+        return
+    import httpx
+
+    r = httpx.post(f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/logOut", timeout=30)
+    # 400 "Logged out" means it was already done.
+    log.info("cloud logOut: %s %s", r.status_code, r.text[:200])
+    if r.status_code in (200, 400):
+        marker.touch()
+
+
 def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN (see .env.example)")
@@ -332,6 +353,7 @@ def main() -> None:
                .persistence(PicklePersistence(filepath=config.DATA_DIR / "state.pickle"))
                .concurrent_updates(True))
     if config.TELEGRAM_LOCAL_API_URL:
+        _leave_cloud_api()
         builder = (builder.base_url(f"{config.TELEGRAM_LOCAL_API_URL}/bot")
                    .base_file_url(f"{config.TELEGRAM_LOCAL_API_URL}/file/bot").local_mode(True))
     app = builder.build()

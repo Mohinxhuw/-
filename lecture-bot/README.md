@@ -40,15 +40,14 @@ docker compose logs -f bot   # لمتابعة عمل البوت
 الحل: تشغيل خادم Bot API خاص (مضمّن في `docker-compose.yml`) يرفع الحد إلى 2 غيغابايت:
 
 1. ادخل https://my.telegram.org ← API development tools، وأنشئ تطبيقاً، وخذ `api_id` و`api_hash`.
-2. في `.env` أضف:
+2. شغّل سكربت التثبيت (`install.sh`) وأدخلهما عندما يسألك. أو أضف إلى `.env` يدوياً:
    ```
    TELEGRAM_API_ID=...
    TELEGRAM_API_HASH=...
    TELEGRAM_LOCAL_API_URL=http://telegram-bot-api:8081
+   COMPOSE_PROFILES=bigfiles
    ```
-3. إن كان البوت يعمل سابقاً على خوادم تيليجرام، نفّذ مرة واحدة:
-   `curl https://api.telegram.org/bot<TOKEN>/logOut`
-4. شغّل: `docker compose --profile bigfiles up -d --build`
+   ثم `docker compose up -d --build`. البوت ينفّذ `logOut` من خوادم تيليجرام تلقائياً أول مرة.
 
 بدون هذه الخطوة يعمل البوت، ويطلب من الطالب إرسال ملف أصغر أو رابط يوتيوب.
 
