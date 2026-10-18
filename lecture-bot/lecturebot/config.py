@@ -22,7 +22,8 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_LOCAL_API_URL = os.environ.get("TELEGRAM_LOCAL_API_URL", "").rstrip("/")
 
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
-CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")
+# High effort: accuracy of the notes and questions comes first.
+CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
 
 # Fast transcription service (Groq). When a key is set it is used first, with the local model as fallback.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
@@ -59,10 +60,6 @@ KEEP_LECTURES = int(os.environ.get("KEEP_LECTURES", "200"))
 REMINDER_TZ = os.environ.get("REMINDER_TZ", "Asia/Riyadh")
 DEFAULT_REMINDER_HOUR = int(os.environ.get("DEFAULT_REMINDER_HOUR", "20"))
 REVIEW_CARDS_PER_DAY = int(os.environ.get("REVIEW_CARDS_PER_DAY", "25"))
-
-# Audio summary voice (edge-tts). Other Arabic voices: ar-SA-ZariyahNeural, ar-EG-SalmaNeural, ar-AE-HamdanNeural.
-TTS_VOICE = os.environ.get("TTS_VOICE", "ar-SA-HamedNeural")
-TTS_RATE = os.environ.get("TTS_RATE", "-5%")
 
 # Credits: tracked from the start, enforced only once paid plans begin (BILLING_ENABLED=true).
 BILLING_ENABLED = _bool("BILLING_ENABLED")

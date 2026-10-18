@@ -1,12 +1,22 @@
-"""Turn a timestamped transcript (and optional slide/board photos) into study material with Claude."""
+"""Turn a timestamped transcript (and optional slides / board photos) into study material with Claude.
+
+Two requests run side by side so neither has to do everything at once:
+- the notes: summary, glossary, divisions (only the classifications the lecturer actually made) and
+  comparison tables, streamed so the student can start reading early;
+- the questions: multiple choice, true/false, essay and flashcards. Every question carries a short
+  quote from the transcript that supports its answer; questions whose quote is not in the transcript
+  are dropped, so the student is never tested on something the lecturer did not say.
+"""
 import base64
 import json
+import re
+import threading
 
 import anthropic
 
 from . import config
 from .media import fmt_time
-from .transcribe import DIALECTS, Segment
+from .transcribe import Segment
 
 MAJOR_NAMES = {
     "medicine": "الطب والعلوم الصحية",
@@ -19,181 +29,118 @@ MAJOR_NAMES = {
     "languages": "اللغات والآداب",
 }
 
-_point = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}, "time": {"type": "string"}},
-    "required": ["text", "time"],
-    "additionalProperties": False,
+
+def _obj(props: dict) -> dict:
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+_S, _T = {"type": "string"}, {"type": "string"}
+_LIST_S = {"type": "array", "items": _S}
+
+PROPS = {
+    "title": _S,
+    "subject": _S,
+    "overview": _S,
+    "sections": {"type": "array", "items": _obj({
+        "heading": _S, "time": _T, "points": {"type": "array", "items": _obj({"text": _S, "time": _T})}})},
+    "glossary": {"type": "array", "items": _obj({"term": _S, "arabic": _S, "explanation": _S})},
+    "divisions": {"type": "array", "items": _obj({
+        "title": _S, "center": _S, "time": _T,
+        "branches": {"type": "array", "items": _obj({"label": _S, "children": _LIST_S})}})},
+    "comparisons": {"type": "array", "items": _obj({
+        "title": _S, "headers": _LIST_S, "rows": {"type": "array", "items": _LIST_S}, "time": _T})},
+    "transcript_fixes": {"type": "array", "items": _obj({"wrong": _S, "right": _S})},
+    "mcq": {"type": "array", "items": _obj({
+        "question": _S, "options": _LIST_S, "answer_index": {"type": "integer"}, "explanation": _S, "time": _T,
+        "evidence": _S})},
+    "true_false": {"type": "array", "items": _obj({
+        "statement": _S, "answer": {"type": "boolean"}, "explanation": _S, "time": _T, "evidence": _S})},
+    "essay": {"type": "array", "items": _obj({
+        "question": _S, "model_answer": _S, "key_points": _LIST_S, "time": _T, "evidence": _S})},
+    "flashcards": {"type": "array", "items": _obj({"front": _S, "back": _S})},
 }
 
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "subject": {"type": "string"},
-        "overview": {"type": "string"},
-        "sections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "heading": {"type": "string"},
-                    "time": {"type": "string"},
-                    "points": {"type": "array", "items": _point},
-                },
-                "required": ["heading", "time", "points"],
-                "additionalProperties": False,
-            },
-        },
-        "glossary": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "term": {"type": "string"},
-                    "arabic": {"type": "string"},
-                    "explanation": {"type": "string"},
-                },
-                "required": ["term", "arabic", "explanation"],
-                "additionalProperties": False,
-            },
-        },
-        "mcq": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string"},
-                    "options": {"type": "array", "items": {"type": "string"}},
-                    "answer_index": {"type": "integer"},
-                    "explanation": {"type": "string"},
-                    "time": {"type": "string"},
-                },
-                "required": ["question", "options", "answer_index", "explanation", "time"],
-                "additionalProperties": False,
-            },
-        },
-        "true_false": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "statement": {"type": "string"},
-                    "answer": {"type": "boolean"},
-                    "explanation": {"type": "string"},
-                    "time": {"type": "string"},
-                },
-                "required": ["statement", "answer", "explanation", "time"],
-                "additionalProperties": False,
-            },
-        },
-        "flashcards": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"front": {"type": "string"}, "back": {"type": "string"}},
-                "required": ["front", "back"],
-                "additionalProperties": False,
-            },
-        },
-        "mindmap": {
-            "type": "object",
-            "properties": {
-                "center": {"type": "string"},
-                "branches": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"label": {"type": "string"},
-                                       "children": {"type": "array", "items": {"type": "string"}}},
-                        "required": ["label", "children"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": ["center", "branches"],
-            "additionalProperties": False,
-        },
-        "comparisons": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "headers": {"type": "array", "items": {"type": "string"}},
-                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
-                    "time": {"type": "string"},
-                },
-                "required": ["title", "headers", "rows", "time"],
-                "additionalProperties": False,
-            },
-        },
-        "transcript_fixes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"wrong": {"type": "string"}, "right": {"type": "string"}},
-                "required": ["wrong", "right"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "flashcards",
-                 "mindmap", "comparisons", "transcript_fixes"],
-    "additionalProperties": False,
-}
+NOTES_KEYS = ("title", "subject", "overview", "sections", "glossary", "divisions", "comparisons", "transcript_fixes")
+QUESTION_KEYS = ("mcq", "true_false", "essay", "flashcards")
+NOTES_SCHEMA = _obj({k: PROPS[k] for k in NOTES_KEYS})
+QUESTIONS_SCHEMA = _obj({k: PROPS[k] for k in QUESTION_KEYS})
+SCHEMA = _obj(PROPS)  # everything, for the translation
 
-SYSTEM = """You turn recorded Arabic university lectures into study material for students.
+COMMON = """The transcript comes from automatic speech recognition. Lecturers mix Modern Standard \
+Arabic with colloquial speech and English technical terms, and the recognizer sometimes writes English \
+terms in Arabic letters or mishears words. Use the context of the whole lecture to understand what was \
+meant, and the attached slides or photos, if any, for the correct spelling of terms.
 
-The transcript comes from automatic speech recognition. Lecturers mix Modern Standard Arabic with \
-colloquial dialect and English technical terms, and the recognizer sometimes writes English terms in \
-Arabic letters or mishears words. Use the context of the whole lecture to understand what was meant.
+Write in clear, correct Modern Standard Arabic. Write each English technical term in Latin letters \
+exactly as used in the field (for example Mitochondria, not ميتوكوندريا), with its Arabic meaning where \
+it helps.
 
-Write everything in clear Modern Standard Arabic, except technical terms: write each English term in \
-Latin letters exactly as used in the field (for example Mitochondria, not ميتوكوندريا), with its Arabic \
-meaning where it helps.
+Accuracy matters more than anything else: students will study from this and be examined on it.
+- Every statement must be something the lecturer actually said or showed. Do not add facts, even true \
+ones, that the lecture did not cover.
+- If a passage is unclear, garbled or you are not sure what was said, leave it out. Never guess.
+- Do not compress so much that the meaning changes: keep conditions, exceptions, numbers, units, \
+names and the direction of relationships exactly as the lecturer stated them.
+- Each point or question must be a complete sentence that a student can understand on its own, \
+without having heard the lecture.
+- Every "time" value is a timestamp copied from the transcript lines, in the same format, where that \
+idea is explained."""
 
-Rules for the fields:
+NOTES_SYSTEM = f"""You write the study notes for a recorded Arabic university lecture.
+
+{COMMON}
+
+Fields:
 - title: a short title for the lecture. subject: the course or field it belongs to.
 - overview: 2 to 4 sentences on what the lecture covers.
 - sections: follow the lecture's own order of ideas. Each section has a heading, the time it starts, \
 and the key points as short sentences a student can revise from. Cover every idea the lecturer \
-taught, including definitions, steps, lists, formulas, examples and comparisons.
-- glossary: every technical term from the lecture, with the term as used, its Arabic equivalent, and \
-a one-sentence explanation.
-- mcq: multiple-choice questions that test understanding of the lecture, four options each, one \
-correct, answer_index counting from 0, a short explanation of why the answer is right, and the time \
-in the lecture where the answer is explained. Write about one question per four minutes of lecture, \
-at least 5 and at most 20. Keep each question under 280 characters, each option under 90 characters \
-and each explanation under 190 characters.
-- true_false: statements about the lecture, about half true and half false, each with the correct \
-answer, a short explanation (for a false statement, say what is actually right) and the time where it \
-is explained. False statements must be plausible, changing one detail of something the lecturer said. \
-Write about one per five minutes of lecture, at least 5 and at most 15. Keep each statement under 280 \
-characters and each explanation under 190 characters.
-- flashcards: front is a question or term, back is the short answer. Between 8 and 25 cards.
-- mindmap: the lecture as a mind map. center is the lecture's topic in 2 to 5 words. 4 to 8 branches \
-for the main ideas, in the lecture's order, each with a label of 2 to 6 words and 2 to 5 children: \
-short phrases (at most 8 words) with the key facts under that idea.
-- comparisons: a table for each comparison the lecturer made or that the lecture clearly sets up \
-(types, stages, advantages and disadvantages, differences between two concepts). headers are the \
-column titles: the first is the aspect being compared, the others are the things compared (2 to 4). \
-Each row starts with the aspect, followed by one short cell per compared thing. 3 to 8 rows. time is \
-where the comparison is explained. Use an empty list when the lecture compares nothing; never invent \
-a comparison the lecture does not support.
+taught, including definitions, steps, lists, formulas and examples.
+- glossary: the technical terms of the lecture, each with the term as used, its Arabic equivalent and \
+a one-sentence explanation as the lecturer explained it.
+- divisions: only the classifications the lecturer explicitly made: when they say that something is \
+divided into, has types, kinds, parts, stages or categories, and name them. For each one: title (for \
+example "أقسام المياه"), center (the thing being divided, 1 to 4 words), branches (exactly the parts the \
+lecturer named, in their order, each label 1 to 6 words, with children: the sub-parts the lecturer \
+named for it, or one short description from the lecture; an empty list if neither) and time. Never \
+turn the outline of the lecture into a division, and never create parts the lecturer did not state. \
+Use an empty list when the lecture has no explicit classification.
+- comparisons: a table for each comparison the lecturer made between two or more things. headers: \
+the first is the aspect being compared, the others are the things compared (2 to 4). Each row starts \
+with the aspect, followed by one short cell per compared thing, 3 to 8 rows. Only aspects the lecturer \
+discussed. Use an empty list when the lecture compares nothing.
 - transcript_fixes: words the recognizer got clearly wrong that matter for studying, mostly English \
-terms written in Arabic letters, mapped to the correct spelling. Only include fixes you are confident \
-about; each "wrong" value must appear exactly as written in the transcript.
-- Every "time" value must be a timestamp copied from the transcript lines, in the same format.
+terms written in Arabic letters, mapped to the correct spelling. Only fixes you are sure of; each \
+"wrong" value must appear exactly as written in the transcript.
 
-Base all content on what the lecturer actually said and on the attached slides, files and photos of \
-the board, if any. Do not add facts the lecture did not cover. When the slides add detail the speech \
-left out (a diagram label, a formula, a list), include it in the matching section. Use the spelling of \
-terms on the slides to correct the transcript. When the recording is made of several parts, cover all \
-of them in one coherent summary that follows the order of the parts.
+When the recording is made of several parts, cover all of them in one coherent set of notes that \
+follows the order of the parts."""
 
-The lecturer may speak a regional dialect. Understand it, but write the study material in Modern \
-Standard Arabic; keep a dialect word only when it is itself the subject being taught."""
+QUESTIONS_SYSTEM = f"""You write the practice questions for a recorded Arabic university lecture.
+
+{COMMON}
+
+Rules for every question:
+- It tests an important idea of the lecture, is worded clearly and unambiguously, and has exactly one \
+correct answer according to what the lecturer said.
+- evidence: a short quote (at most 25 words) copied word for word from the transcript lines that \
+supports the answer, without the timestamp. If you cannot point to such a quote, do not write the \
+question.
+- Do not ask about unclear passages, side remarks or jokes.
+
+Fields:
+- mcq: multiple-choice questions with four options of the same kind and similar length, one correct, \
+answer_index counting from 0, no "all of the above" or "none of the above". explanation: why the \
+answer is right, in one sentence. About one question per four minutes of lecture, at least 5 and at \
+most 20. Keep each question under 280 characters, each option under 90 and each explanation under 190.
+- true_false: statements about the lecture, about half true and half false. A false statement changes \
+one clear detail of something the lecturer said, so that it is definitely false, not debatable. \
+explanation: for a false statement, what is actually right. About one per five minutes, at least 5 and \
+at most 15. Statements under 280 characters, explanations under 190.
+- essay: 3 to 6 questions that need an explained answer (explain, compare, justify, describe the \
+steps). model_answer: a complete answer from the lecture in 3 to 8 sentences. key_points: the 3 to 6 \
+points a full answer must contain, used to grade the student.
+- flashcards: front is a question or a term, back is the short answer. Between 8 and 25 cards."""
 
 
 class AnalysisError(Exception):
@@ -204,15 +151,7 @@ def _transcript_text(segments: list[Segment]) -> str:
     return "\n".join(f"[{fmt_time(s.start)}] {s.text}" for s in segments)
 
 
-def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
-            duration: float = 0.0, materials: list | None = None, dialect: str | None = None,
-            parts: list[tuple[float, str]] | None = None, on_section=None) -> dict:
-    """Return the study-material dict described by SCHEMA.
-
-    materials: lecture files (lecturebot.materials.Material). parts: (start_seconds, title) of each
-    recording when several were joined. on_section(section) is called as each summary section is written.
-    """
-    materials = materials or []
+def _content(segments, major, images, duration, materials, parts) -> list[dict]:
     content: list[dict] = []
     for m in materials:
         if m.pdf:
@@ -221,17 +160,12 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
                                        "data": base64.standard_b64encode(m.pdf).decode()}})
     all_images = list(images or []) + [img for m in materials for img in m.images]
     for data, media_type in all_images[: config.MAX_IMAGES_PER_LECTURE]:
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": base64.standard_b64encode(data).decode()},
-        })
-
+        content.append({"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                                    "data": base64.standard_b64encode(data).decode()}})
     intro = []
     field = MAJOR_NAMES.get(major or "")
     if field:
         intro.append(f"تخصص الطالب: {field}.")
-    if dialect and dialect != "msa" and dialect in DIALECTS:
-        intro.append(f"لهجة المحاضر: {DIALECTS[dialect][0]}.")
     if materials:
         intro.append("مرفق ملفات المحاضرة: " + "، ".join(m.name for m in materials) + ".")
     if images:
@@ -243,44 +177,69 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     intro.append(f"مدة المحاضرة: {fmt_time(duration)}.")
     slides = [m for m in materials if m.text and not m.pdf]
     slide_text = "".join(f"\n\nنص الشرائح ({m.name}):\n<slides>\n{m.text[:60000]}\n</slides>" for m in slides)
-    content.append({
-        "type": "text",
-        "text": "\n".join(intro) + slide_text
-                + f"\n\nنص المحاضرة:\n<transcript>\n{_transcript_text(segments)}\n</transcript>",
-    })
+    content.append({"type": "text", "text": "\n".join(intro) + slide_text
+                    + f"\n\nنص المحاضرة:\n<transcript>\n{_transcript_text(segments)}\n</transcript>"})
+    return content
 
+
+def _call(system: str, content: list[dict], schema: dict, on_text=None) -> dict:
     client = anthropic.Anthropic()
-    sections = _SectionStream(on_section) if on_section else None
     try:
         with client.beta.messages.stream(
             model=config.CLAUDE_MODEL,
             max_tokens=64000,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
-            output_config={"effort": config.CLAUDE_EFFORT,
-                           "format": {"type": "json_schema", "schema": SCHEMA}},
-            system=SYSTEM,
+            output_config={"effort": config.CLAUDE_EFFORT, "format": {"type": "json_schema", "schema": schema}},
+            system=system,
             messages=[{"role": "user", "content": content}],
         ) as stream:
-            if sections:
+            if on_text:
                 for text in stream.text_stream:
-                    sections.feed(text)
+                    on_text(text)
             message = stream.get_final_message()
     except anthropic.APIStatusError as e:
         raise AnalysisError(f"Claude API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise AnalysisError("Could not reach the Claude API") from e
-
     if message.stop_reason == "refusal":
         raise AnalysisError("The model declined to process this lecture")
     if message.stop_reason == "max_tokens":
         raise AnalysisError("The study material was too long to finish")
     text = "".join(b.text for b in message.content if b.type == "text")
     try:
-        result = json.loads(text)
+        return json.loads(text)
     except json.JSONDecodeError as e:
         raise AnalysisError("The model returned invalid JSON") from e
-    _clean(result)
+
+
+def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
+            duration: float = 0.0, materials: list | None = None, parts: list[tuple[float, str]] | None = None,
+            on_section=None) -> dict:
+    """Return the study material (all PROPS keys).
+
+    materials: lecture files (lecturebot.materials.Material). parts: (start_seconds, title) of each
+    recording when several were joined. on_section(section) is called as each summary section is written.
+    """
+    content = _content(segments, major, images, duration, materials or [], parts)
+    questions: dict = {}
+    failure: list[Exception] = []
+
+    def ask_questions():
+        try:
+            questions.update(_call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA))
+        except Exception as e:  # reported after the notes are done
+            failure.append(e)
+
+    worker = threading.Thread(target=ask_questions, daemon=True)
+    worker.start()
+    sections = _SectionStream(on_section) if on_section else None
+    result = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None)
+    worker.join()
+    if failure:
+        raise failure[0] if isinstance(failure[0], AnalysisError) else AnalysisError(str(failure[0]))
+    result.update(questions)
+    _clean(result, _transcript_text(segments))
     return result
 
 
@@ -342,28 +301,53 @@ class _SectionStream:
             pass
 
 
-def _clean(result: dict) -> None:
-    """Drop malformed questions so later steps (PDF, Telegram quiz polls) never break on them."""
-    good = []
+# ---------- checks ----------
+
+_DIACRITICS = re.compile(r"[ؐ-ًؚ-ٰٟـ]")
+
+
+def _words(text: str) -> list[str]:
+    t = _DIACRITICS.sub("", text or "")
+    t = re.sub("[إأآٱ]", "ا", t).replace("ى", "ي").replace("ة", "ه")
+    return [w for w in re.findall(r"\w+", t.lower()) if len(w) > 1]
+
+
+def supported(evidence: str, transcript_words: set[str]) -> bool:
+    """True when most words of the quoted evidence occur in the transcript."""
+    words = _words(evidence)
+    if len(words) < 3:
+        return False
+    return sum(w in transcript_words for w in words) / len(words) >= 0.7
+
+
+def _clean(result: dict, transcript: str) -> None:
+    """Drop malformed or unsupported items so the PDF and the quizzes never show them."""
+    tw = set(_words(transcript))
+    mcq = []
     for q in result.get("mcq", []):
         opts = [o for o in q.get("options", []) if o.strip()]
-        if 2 <= len(opts) <= 10 and 0 <= q.get("answer_index", -1) < len(opts):
+        if 2 <= len(opts) <= 10 and 0 <= q.get("answer_index", -1) < len(opts) and supported(q.get("evidence", ""), tw):
             q["options"] = opts
-            good.append(q)
-    result["mcq"] = good
+            mcq.append(q)
+    result["mcq"] = mcq
     result["true_false"] = [t for t in result.get("true_false", [])
-                            if (t.get("statement") or "").strip() and isinstance(t.get("answer"), bool)]
-    # The model sometimes copies the transcript's "[mm:ss]" brackets into time fields.
-    width_ok = []
+                            if (t.get("statement") or "").strip() and isinstance(t.get("answer"), bool)
+                            and supported(t.get("evidence", ""), tw)]
+    result["essay"] = [e for e in result.get("essay", [])
+                       if e.get("question", "").strip() and e.get("model_answer", "").strip()
+                       and supported(e.get("evidence", ""), tw)]
+    comps = []
     for c in result.get("comparisons", []):
         n = len(c.get("headers", []))
         rows = [r for r in c.get("rows", []) if len(r) == n]
         if n >= 2 and rows:
             c["rows"] = rows
-            width_ok.append(c)
-    result["comparisons"] = width_ok
-    result.setdefault("mindmap", {"center": "", "branches": []})
-    items = result.get("sections", []) + result["mcq"] + result["true_false"] + result["comparisons"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])]
+            comps.append(c)
+    result["comparisons"] = comps
+    result["divisions"] = [d for d in result.get("divisions", []) if len(d.get("branches", [])) >= 2]
+    # The model sometimes copies the transcript's "[mm:ss]" brackets into time fields.
+    items = (result.get("sections", []) + result["mcq"] + result["true_false"] + result["essay"] + comps
+             + result["divisions"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])])
     for item in items:
         if isinstance(item.get("time"), str):
             item["time"] = item["time"].strip(" []")

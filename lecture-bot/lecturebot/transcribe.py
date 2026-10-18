@@ -36,19 +36,6 @@ MAJOR_HINTS = {
 }
 DEFAULT_HINT = "محاضرة جامعية باللغة العربية، وقد تحتوي على مصطلحات إنجليزية."
 
-# The lecturer's dialect: (name shown to the student, a phrase in that dialect for the Whisper prompt).
-DIALECTS = {
-    "msa": ("الفصحى", ""),
-    "gulf": ("خليجية", "زين، الحين خلونا نشوف وش معنى هذا الشي."),
-    "egyptian": ("مصرية", "طيب، دلوقتي تعالوا نشوف الحتة دي معناها إيه."),
-    "levantine": ("شامية", "منيح، هلق خلونا نشوف شو يعني هالشي."),
-    "iraqi": ("عراقية", "زين، هسه خلي نشوف شنو معنى هذا."),
-    "maghrebi": ("مغاربية", "واخا، دابا غادي نشوفو شنو كيعني هادشي."),
-    "sudanese": ("سودانية", "كويس، هسي خلونا نشوف الحاجة دي معناها شنو."),
-    "yemeni": ("يمنية", "تمام، الحين خلونا نشوف ايش معنى هذا."),
-}
-
-
 @dataclass
 class Segment:
     start: float
@@ -60,13 +47,9 @@ class TranscriptionError(Exception):
     pass
 
 
-def build_prompt(major: str | None = None, dialect: str | None = None, terms: list[str] | None = None) -> str:
+def build_prompt(major: str | None = None, terms: list[str] | None = None) -> str:
     """Context for Whisper. It only reads the last ~224 tokens, so keep it short; terms go last."""
-    parts = [MAJOR_HINTS.get(major or "", DEFAULT_HINT)]
-    phrase = DIALECTS.get(dialect or "", ("", ""))[1]
-    if phrase:
-        parts.append(phrase)
-    base = " ".join(parts)
+    base = MAJOR_HINTS.get(major or "", DEFAULT_HINT)
     terms = list(terms or [])[:20]
     # ~420 characters stays under Groq's 224-token prompt limit (measured: 377 chars = 172 tokens).
     while terms and len(base) + len("، ".join(terms)) + 20 > 420:
@@ -74,10 +57,10 @@ def build_prompt(major: str | None = None, dialect: str | None = None, terms: li
     return base + (" مصطلحات المحاضرة: " + "، ".join(terms) + "." if terms else "")
 
 
-def transcribe(audio: np.ndarray, major: str | None = None, on_progress=None, dialect: str | None = None,
+def transcribe(audio: np.ndarray, major: str | None = None, on_progress=None,
                terms: list[str] | None = None) -> list[Segment]:
     """Transcribe 16 kHz mono audio. on_progress(fraction) is called as work completes."""
-    prompt = build_prompt(major, dialect, terms)
+    prompt = build_prompt(major, terms)
     if config.GROQ_API_KEY:
         try:
             return _transcribe_groq(audio, prompt, on_progress)

@@ -111,7 +111,7 @@ async def _lecture(update: Update, context, lid: str) -> None:
     dur = f" · {botkit.minutes(meta['duration'])}" if meta.get("duration") else ""
     caption = f"📄 {meta.get('title', '')}\n📁 {course} · {when}{dur}"
     if not await botkit.send_lecture_pdf(context, chat, uid, ud, lid, caption):
-        await context.bot.send_message(chat, caption, reply_markup=botkit.lecture_keyboard(lid))
+        await context.bot.send_message(chat, caption, reply_markup=botkit.lecture_keyboard(lid, meta))
 
 
 async def on_lib(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:

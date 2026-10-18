@@ -1,5 +1,5 @@
-"""Listening, translating, exporting and sharing: audio summary, English PDF, Word / Notion files,
-share links for classmates and study groups."""
+"""Translating, exporting and sharing: English PDF, Word / Notion files, share links for classmates
+and study groups."""
 import asyncio
 import shutil
 import tempfile
@@ -9,14 +9,14 @@ from html import escape
 from pathlib import Path
 
 from telegram import InlineKeyboardMarkup, Update
-from telegram.constants import ChatAction, ParseMode
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
 import bot_growth
 import botkit
 from botkit import button, log
-from lecturebot import config, exports, library, pipeline, render, store, study, tts
+from lecturebot import config, exports, library, pipeline, render, store, study
 from lecturebot.analyze import AnalysisError
 
 
@@ -28,40 +28,10 @@ async def _resend(context, chat_id: int, file_id: str | None, kind: str, caption
     if not file_id:
         return False
     try:
-        if kind == "audio":
-            await context.bot.send_audio(chat_id, file_id, caption=caption)
-        else:
-            await context.bot.send_document(chat_id, file_id, caption=caption)
+        await context.bot.send_document(chat_id, file_id, caption=caption)
         return True
     except TelegramError:
         return False
-
-
-# ---------- audio summary ----------
-
-async def on_audio(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    chat, meta = update.effective_chat.id, _meta(context, lid)
-    caption = f"🎧 ملخص صوتي: {lec['title']}"
-    if await _resend(context, chat, meta.get("audio_file_id"), "audio", caption):
-        return
-    status = await context.bot.send_message(chat, "🎧 أجهّز الملخص الصوتي… (دقيقة تقريباً)")
-    work = Path(tempfile.mkdtemp(prefix="tts_", dir=botkit.work_root()))
-    try:
-        script = await asyncio.to_thread(study.audio_script, lec)
-        await context.bot.send_chat_action(chat, ChatAction.UPLOAD_VOICE)
-        mp3 = await asyncio.to_thread(tts.speak, script, work / "summary.mp3")
-        with open(mp3, "rb") as fh:
-            sent = await context.bot.send_audio(chat, fh, title=lec["title"][:60], performer="فَهيم",
-                                                duration=tts.duration(mp3), caption=caption,
-                                                filename=pipeline.safe_name(lec["title"]) + ".mp3")
-        if sent.audio:
-            meta["audio_file_id"] = sent.audio.file_id
-        await status.delete()
-    except (AnalysisError, tts.TTSError) as e:
-        log.warning("audio summary failed: %s", e)
-        await status.edit_text("⚠️ تعذّر تجهيز الملخص الصوتي الآن. حاول بعد قليل.")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------- English version ----------
@@ -117,8 +87,7 @@ def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str
     to_ud = context.application.user_data[to_uid]
     new_lid = uuid.uuid4().hex[:8]
     full = dict(full, time=time.time(), shared_from=sender_name, course=None)
-    for k in ("audio_file_id", "en_file_id"):
-        full.pop(k, None)
+    full.pop("en_file_id", None)
     store.put(to_uid, to_ud, new_lid, full)
     library.assign_course(to_ud, new_lid, full.get("subject", ""))
     study.add_cards(to_ud.setdefault("deck", []), full.get("flashcards", []), full.get("title", ""))
@@ -134,12 +103,12 @@ async def _deliver(context, to_uid: int, new_lid: str, note: str) -> None:
     if meta.get("pdf_file_id"):
         try:
             await context.bot.send_document(to_uid, meta["pdf_file_id"], caption=note,
-                                            reply_markup=botkit.lecture_keyboard(new_lid))
+                                            reply_markup=botkit.lecture_keyboard(new_lid, meta))
             sent = True
         except TelegramError as e:
             log.info("deliver pdf to %s failed: %s", to_uid, e)
     if not sent:
-        await context.bot.send_message(to_uid, note, reply_markup=botkit.lecture_keyboard(new_lid))
+        await context.bot.send_message(to_uid, note, reply_markup=botkit.lecture_keyboard(new_lid, meta))
 
 
 # ---------- share link ----------
@@ -299,7 +268,7 @@ def register(app) -> None:
     app.add_handler(CommandHandler("groups", groups_cmd))
 
 
-botkit.LECTURE_BUTTONS.update({"audio": on_audio, "en": on_english, "docx": on_docx, "md": on_markdown,
+botkit.LECTURE_BUTTONS.update({"en": on_english, "docx": on_docx, "md": on_markdown,
                                "share": on_share, "tog": on_to_group})
 botkit.BUTTONS.update({"grp": on_group})
 botkit.TEXT_INPUTS.update({"group_name": input_group_name})

@@ -109,10 +109,13 @@ def lecture_docx(lec: dict) -> bytes:
         d.h(_with_time(sec.get("heading", ""), sec.get("time", "")), 2)
         for pt in sec.get("points", []):
             d.bullet(_with_time(pt.get("text", ""), pt.get("time", "")))
-    png = mindmap.render_png(lec.get("mindmap") or {}, width_px=1800)
-    if png:
-        d.h("الخريطة الذهنية")
-        d.doc.add_picture(io.BytesIO(png), width=Cm(17))
+    if lec.get("divisions"):
+        d.h("التقسيمات")
+        for div in lec["divisions"]:
+            d.h(_with_time(div.get("title", ""), div.get("time", "")), 2)
+            png = mindmap.render_png(div, width_px=1800)
+            if png:
+                d.doc.add_picture(io.BytesIO(png), width=Cm(17))
     for c in lec.get("comparisons", []):
         d.h(c["title"], 2)
         d.table(c["headers"], c["rows"])
@@ -136,6 +139,11 @@ def lecture_docx(lec: dict) -> bytes:
         d.h("الإجابات", 2)
         for i, t in enumerate(lec["true_false"], 1):
             d.p(f"{i}. {'صح' if t['answer'] else 'خطأ'} — {t.get('explanation', '')}")
+    if lec.get("essay"):
+        d.h("أسئلة مقالية")
+        for i, q in enumerate(lec["essay"], 1):
+            d.p(f"{i}. {q['question']}", bold=True)
+            d.p(f"نموذج الإجابة: {q.get('model_answer', '')}")
     if lec.get("flashcards"):
         d.h("بطاقات المراجعة")
         d.table(["السؤال", "الجواب"], [[c["front"], c["back"]] for c in lec["flashcards"]])
@@ -162,13 +170,14 @@ def lecture_markdown(lec: dict) -> str:
     for sec in lec.get("sections", []):
         out += [f"### {_with_time(sec.get('heading', ''), sec.get('time', ''))}", ""]
         out += [f"- {_with_time(p.get('text', ''), p.get('time', ''))}" for p in sec.get("points", [])] + [""]
-    mm = lec.get("mindmap") or {}
-    if mm.get("branches"):
-        out += ["## الخريطة الذهنية", "", f"- **{mm.get('center', '')}**"]
-        for b in mm["branches"]:
-            out.append(f"  - **{b['label']}**")
-            out += [f"    - {c}" for c in b.get("children", [])]
-        out.append("")
+    if lec.get("divisions"):
+        out += ["## التقسيمات", ""]
+        for div in lec["divisions"]:
+            out += [f"### {_with_time(div.get('title', ''), div.get('time', ''))}", "", f"- **{div.get('center', '')}**"]
+            for b in div.get("branches", []):
+                out.append(f"  - **{b['label']}**")
+                out += [f"    - {c}" for c in b.get("children", [])]
+            out.append("")
     for c in lec.get("comparisons", []):
         out += [f"### {c['title']}", "", "| " + " | ".join(_cell(h) for h in c["headers"]) + " |",
                 "|" + "---|" * len(c["headers"])]
@@ -186,6 +195,10 @@ def lecture_markdown(lec: dict) -> str:
         out += ["## أسئلة صح أو خطأ", ""]
         out += [f"{i}. {t['statement']} — **{'صح' if t['answer'] else 'خطأ'}**: {t.get('explanation', '')}"
                 for i, t in enumerate(lec["true_false"], 1)] + [""]
+    if lec.get("essay"):
+        out += ["## أسئلة مقالية", ""]
+        for i, q in enumerate(lec["essay"], 1):
+            out += [f"**{i}. {q['question']}**", "", f"نموذج الإجابة: {q.get('model_answer', '')}", ""]
     if lec.get("flashcards"):
         out += ["## بطاقات المراجعة", "", "| السؤال | الجواب |", "|---|---|"]
         out += [f"| {_cell(c['front'])} | {_cell(c['back'])} |" for c in lec["flashcards"]] + [""]
@@ -231,6 +244,13 @@ def exam_paper_html(lec: dict, with_answers: bool) -> str:
             ans = f"<b>{'صح' if t['answer'] else 'خطأ'}</b>" if with_answers else "&nbsp; &nbsp; &nbsp;"
             note = f'<div class="cover-note">{e(t.get("explanation", ""))}</div>' if with_answers else ""
             parts.append(f'<div class="q">{i}. {e(t["statement"])} <span class="opt">( {ans} )</span>{note}</div>')
+    essays = lec.get("essay", [])
+    if essays:
+        parts.append(f"<h2>السؤال الثالث: أجب عما يلي ({len(essays)} أسئلة)</h2>")
+        for i, q in enumerate(essays, 1):
+            body = (f'<div class="answer"><b>نموذج الإجابة:</b> {e(q.get("model_answer", ""))}</div>' if with_answers
+                    else '<div style="height:70pt"></div>')
+            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b>{body}</div>')
     css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/") + PAPER_CSS
     return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>{css}</style></head>' \
            f'<body>{"".join(parts)}</body></html>'
@@ -250,4 +270,10 @@ def exam_paper_docx(lec: dict) -> bytes:
         d.h(f"السؤال الثاني: ضع صح أو خطأ ({len(lec['true_false'])} درجة)")
         for i, t in enumerate(lec["true_false"], 1):
             d.p(f"{i}. {t['statement']}  (      )")
+    if lec.get("essay"):
+        d.h("السؤال الثالث: أجب عما يلي")
+        for i, q in enumerate(lec["essay"], 1):
+            d.p(f"{i}. {q['question']}", bold=True)
+            for _ in range(4):
+                d.p("....................................................................................")
     return d.bytes()

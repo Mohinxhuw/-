@@ -43,23 +43,26 @@ def button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data[:64])
 
 
-def lecture_keyboard(lid: str) -> InlineKeyboardMarkup:
+def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup:
+    """The buttons under a lecture's PDF. meta: the lecture's details (to know if it has divisions)."""
+    second = [button("💡 اشرح لي أبسط", f"simp:{lid}")]
+    if (meta or {}).get("ndiv"):
+        second.append(button("🌳 التقسيمات", f"div:{lid}"))
     return InlineKeyboardMarkup([
-        [button("🧪 اختبرني", f"quiz:{lid}"), button("✅❌ صح أو خطأ", f"tf:{lid}")],
-        [button("🃏 بطاقات المراجعة", f"cards:{lid}"), button("🧠 الخريطة الذهنية", f"map:{lid}")],
-        [button("❓ اسألني عن المحاضرة", f"ask:{lid}"), button("💡 اشرح لي أبسط", f"simp:{lid}")],
-        [button("🎧 ملخص صوتي", f"audio:{lid}"), button("🌐 English", f"en:{lid}")],
-        [button("🔗 شاركها مع زميل", f"share:{lid}"), button("⋯ المزيد", f"more:{lid}")],
+        [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
+        second,
+        [button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
     ])
 
 
 def more_keyboard(lid: str, ud: dict) -> InlineKeyboardMarkup:
     rows = [
-        [button("📤 Word", f"docx:{lid}"), button("📝 Notion (Markdown)", f"md:{lid}")],
+        [button("📤 Word", f"docx:{lid}"), button("📝 Notion", f"md:{lid}")],
         [button("📄 النص الكامل", f"txt:{lid}"), button("📁 نقل لمادة أخرى", f"mv:{lid}")],
+        [button("🔗 شاركها مع زميل", f"share:{lid}")],
     ]
     if ud.get("groups"):
-        rows.append([button("👥 أرسلها لمجموعة", f"tog:{lid}")])
+        rows[-1].append(button("👥 أرسلها لمجموعة", f"tog:{lid}"))
     if ud.get("teacher"):
         rows.append([button("📝 ورقة اختبار", f"tpaper:{lid}"), button("🔑 نموذج الإجابة", f"tkey:{lid}")])
         rows.append([button("🔗 اختبار لطلابي", f"tquiz:{lid}")])
@@ -128,7 +131,8 @@ async def send_lecture_pdf(context, chat_id: int, user_id: int, ud: dict, lid: s
     if not meta.get("pdf_file_id"):
         return False
     try:
-        await context.bot.send_document(chat_id, meta["pdf_file_id"], caption=caption, reply_markup=lecture_keyboard(lid))
+        await context.bot.send_document(chat_id, meta["pdf_file_id"], caption=caption,
+                                        reply_markup=lecture_keyboard(lid, meta))
         return True
     except TelegramError as e:
         log.warning("resend pdf failed: %s", e)

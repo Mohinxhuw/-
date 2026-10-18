@@ -47,6 +47,9 @@ if ! grep -qE '^ANTHROPIC_API_KEY=sk-ant-' .env; then
   set_env ANTHROPIC_API_KEY "$KEY"
 fi
 
+# Settings changed by later versions (only when still at the old default).
+sed -i 's/^CLAUDE_EFFORT=medium$/CLAUDE_EFFORT=high/' .env
+
 # Optional: fast transcription with Groq (an hour of lecture in about a minute).
 if ! grep -qE '^GROQ_API_KEY=' .env; then
   echo

@@ -35,7 +35,7 @@ def _text(message) -> str:
 
 
 def ask(lec: dict, question: str, history: list[dict] | None = None) -> str:
-    """Answer a question about one lecture. history: earlier {"role", "content"} turns (append-only)."""
+    """Answer a request about one lecture (used for the simpler explanations)."""
     client = anthropic.Anthropic()
     messages = list(history or []) + [{"role": "user", "content": question}]
     try:
@@ -185,32 +185,50 @@ def grade(card: dict, known: bool) -> None:
     card["due"] = (today() + dt.timedelta(days=INTERVALS[card["box"]])).isoformat()
 
 
-# ---------- audio summary ----------
+# ---------- essay grading ----------
 
-AUDIO_SYSTEM = """You write the script of a spoken summary of a recorded Arabic university lecture, to \
-be read aloud by a text-to-speech voice for a student listening on the way to university.
+GRADE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score": {"type": "integer"},
+        "good": {"type": "string"},
+        "missing": {"type": "array", "items": {"type": "string"}},
+        "advice": {"type": "string"},
+    },
+    "required": ["score", "good", "missing", "advice"],
+    "additionalProperties": False,
+}
 
-Write in clear, natural spoken Modern Standard Arabic, as a friendly teacher would explain it. Cover the \
-main ideas in the lecture's order, with the key definitions and examples; about 500 to 800 words. Say \
-English technical terms in Latin letters once, next to their Arabic meaning. Write only the words to be \
-spoken: no headings, bullets, symbols, emojis, timestamps or Markdown. Use short sentences and full \
-stops so the voice pauses naturally. End with a two-sentence recap."""
+GRADE_SYSTEM = """You grade a university student's written answer to an essay question about a lecture, fairly and kindly, in clear Modern Standard Arabic.
+
+You get the question, the model answer from the lecture, the key points a full answer must contain, and the student's answer. Judge the meaning, not the wording: a point counts when the student expressed it correctly in their own words. Do not penalise spelling or style. A wrong statement about the content loses marks.
+- score: 0 to 10, in proportion to the key points covered correctly.
+- good: one sentence on what the student got right (or that the answer is off topic).
+- missing: the key points that are missing or wrong, each as a short corrected statement.
+- advice: one sentence on how to make the answer complete."""
 
 
-def audio_script(lec: dict) -> str:
-    notes = {k: lec.get(k) for k in ("title", "overview", "sections", "glossary")}
+def grade_essay(question: dict, answer: str) -> dict:
+    prompt = (f"السؤال: {question['question']}\n\nنموذج الإجابة: {question.get('model_answer', '')}\n\n"
+              "النقاط الأساسية:\n" + "\n".join(f"- {p}" for p in question.get("key_points", []))
+              + f"\n\nإجابة الطالب:\n<answer>\n{answer}\n</answer>")
     client = anthropic.Anthropic()
     try:
         message = client.beta.messages.create(
-            model=config.CLAUDE_MODEL, max_tokens=8000, system=AUDIO_SYSTEM,
-            messages=[{"role": "user", "content": "ملاحظات المحاضرة:\n" + json.dumps(notes, ensure_ascii=False)}],
-            output_config={"effort": "low"}, **FALLBACK,
+            model=config.CLAUDE_MODEL, max_tokens=4000, system=GRADE_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": GRADE_SCHEMA}}, **FALLBACK,
         )
     except anthropic.APIStatusError as e:
         raise AnalysisError(f"Claude API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise AnalysisError("Could not reach the Claude API") from e
-    return _text(message)
+    try:
+        result = json.loads(_text(message))
+    except json.JSONDecodeError as e:
+        raise AnalysisError("The model returned invalid JSON") from e
+    result["score"] = max(0, min(10, int(result.get("score", 0))))
+    return result
 
 
 # ---------- English version ----------
@@ -225,12 +243,11 @@ translate the explanation."""
 def translate(lec: dict) -> dict:
     from .analyze import SCHEMA
 
-    keys = ("title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "flashcards", "mindmap",
-            "comparisons")
+    keys = ("title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "essay", "flashcards",
+            "divisions", "comparisons")
     schema = {"type": "object", "properties": {k: SCHEMA["properties"][k] for k in keys},
               "required": list(keys), "additionalProperties": False}
-    notes = {k: lec.get(k) for k in keys}
-    notes["mindmap"] = notes["mindmap"] or {"center": "", "branches": []}
+    notes = {k: lec.get(k) or ("" if k in ("title", "subject", "overview") else []) for k in keys}
     client = anthropic.Anthropic()
     try:
         with client.beta.messages.stream(

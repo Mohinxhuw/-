@@ -36,7 +36,7 @@ def estimate_seconds(duration: float) -> int:
 
 def run(source: Source | list[Source], out_dir: Path, major: str | None = None,
         images: list[tuple[bytes, str]] | None = None, on_stage=None, analyzer=None,
-        materials: list | None = None, dialect: str | None = None, on_section=None) -> LectureResult:
+        materials: list | None = None, on_section=None) -> LectureResult:
     """on_stage(stage, fraction) reports progress: stage is 'transcribe', 'analyze' or 'render'.
     Several sources are joined, in order, into one lecture."""
     stage = on_stage or (lambda *_: None)
@@ -60,8 +60,7 @@ def run(source: Source | list[Source], out_dir: Path, major: str | None = None,
     materials = materials or []
     terms = materials_mod.key_terms([m.text for m in materials])
     stage("transcribe", 0.0)
-    segments = transcribe.transcribe(audio, major, on_progress=lambda f: stage("transcribe", f),
-                                     dialect=dialect, terms=terms)
+    segments = transcribe.transcribe(audio, major, on_progress=lambda f: stage("transcribe", f), terms=terms)
     del audio
 
     stage("analyze", 0.0)
@@ -69,7 +68,7 @@ def run(source: Source | list[Source], out_dir: Path, major: str | None = None,
         result = analyzer(segments, major=major, images=images, duration=duration)
     else:
         result = analyze.analyze(segments, major=major, images=images, duration=duration, materials=materials,
-                                 dialect=dialect, parts=parts, on_section=on_section)
+                                 parts=parts, on_section=on_section)
     segments = analyze.apply_fixes(segments, result.get("transcript_fixes", []))
     paragraphs = transcribe.to_paragraphs(segments)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import config
 
-META_KEYS = ("title", "subject", "course", "time", "duration", "pdf_file_id", "shared_from")
+META_KEYS = ("title", "subject", "course", "time", "duration", "pdf_file_id", "shared_from", "ndiv")
 
 
 def _dir(user_id: int) -> Path:

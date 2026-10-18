@@ -23,7 +23,7 @@ from telegram.ext import Application  # noqa: E402
 from telegram.request import BaseRequest  # noqa: E402
 
 import bot  # noqa: E402
-from lecturebot import pipeline, study, tts  # noqa: E402
+from lecturebot import pipeline, study  # noqa: E402
 from lecturebot.pipeline import LectureResult  # noqa: E402
 
 SENT: list[tuple[int, str, dict]] = []
@@ -80,8 +80,11 @@ ANALYSIS = {
     "mcq": [{"question": "أين يحدث كربس؟", "options": ["النواة", "الميتوكوندريا"], "answer_index": 1,
              "explanation": "", "time": "01:00"}],
     "true_false": [{"statement": "التحلل في النواة", "answer": False, "explanation": "", "time": "00:05"}],
+    "essay": [{"question": "اشرح مراحل التنفس الخلوي", "model_answer": "التحلل ثم كربس ثم نقل الإلكترونات.",
+               "key_points": ["التحلل", "كربس", "نقل الإلكترونات"], "time": "00:05", "evidence": ""}],
     "flashcards": [{"front": "ناتج التحلل؟", "back": "2 ATP"}], "comparisons": [],
-    "mindmap": {"center": "التنفس", "branches": [{"label": "التحلل", "children": ["2 ATP"]}]},
+    "divisions": [{"title": "مراحل التنفس", "center": "التنفس الخلوي", "time": "00:05",
+                   "branches": [{"label": "التحلل", "children": []}, {"label": "كربس", "children": []}]}],
 }
 
 
@@ -95,19 +98,10 @@ def fake_run(sources, work, *a):
 
 pipeline.run = fake_run
 study.ask = lambda lec, q, h=None: f"جواب: {q}"
-study.audio_script = lambda lec: "نص صوتي"
+study.grade_essay = lambda q, a: {"score": 7, "good": "ذكرت مرحلتين", "missing": ["نقل الإلكترونات"], "advice": "اذكر الثالثة"}
 study.translate = lambda lec: dict(ANALYSIS, title="Cellular respiration")
 study.exam_summary = lambda lecs: {"title": "ملخص", "overview": "", "topics": [], "must_memorize": [], "pitfalls": [],
                                    "self_test": []}
-
-
-def fake_speak(text, out):
-    out.write_bytes(b"\0" * 5000)
-    return out
-
-
-tts.speak = fake_speak
-tts.duration = lambda p: 60
 
 A, B, T = 7, 8, 9  # two students and a teacher
 
@@ -178,7 +172,7 @@ async def main():
         assert (TMP / "data" / "lectures" / str(A) / f"{lid}.json").exists(), "lecture saved on disk"
         cid = ud["lectures"][lid]["course"]
         assert ud["courses"][cid]["name"] == "أحياء"
-        last(A, "حفظتها في مكتبتك")
+        last(A, "حُفظت في مادة")
 
         # library, search, exam date, plan
         await send(cmd(A, "/library"))
@@ -199,11 +193,26 @@ async def main():
         await send(msg(A, text="فسيولوجي"))
         assert ud["courses"][ud["lectures"][lid]["course"]]["name"] == "فسيولوجي"
 
-        # phase 4 buttons
-        for action in ("audio", "audio", "en", "docx", "md", "more"):
+        # buttons under the PDF: divisions only when the lecture has them
+        kb = [b for chat, name, p in SENT if chat == A and name == "sendDocument" for b in p.get("buttons", [])]
+        assert f"div:{lid}" in kb and not any(b.startswith(("audio:", "ask:", "tf:", "map:")) for b in kb), kb
+        for action in ("div", "en", "en", "docx", "md", "more", "simp"):
             await send(press(A, f"{action}:{lid}"))
-        assert ud["lectures"][lid]["audio_file_id"].startswith("aud"), "audio cached"
         assert ud["lectures"][lid]["en_file_id"].startswith("doc"), "English cached"
+
+        # test me: the menu, each kind, and an essay graded
+        await send(press(A, f"quiz:{lid}"))
+        assert last(A, "اختر نوع الأسئلة")["buttons"] == [f"qz:{lid}:mcq", f"qz:{lid}:tf", f"qz:{lid}:essay", f"qz:{lid}:all"]
+        POLLS.clear()
+        await send(press(A, f"qz:{lid}:tf"))
+        assert len(POLLS) == 1
+        await send(press(A, f"qz:{lid}:essay"))
+        last(A, "سؤال مقالي 1 من 1")
+        await send(msg(A, text="التحلل السكري ثم دورة كربس"))
+        assert "درجتك: 7 من 10" in last(A, "درجتك")["text"]
+        await send(press(A, f"es:{lid}:0:show"))
+        await send(press(A, f"es:{lid}:1:go"))
+        last(A, "انتهت الأسئلة المقالية")
 
         # share link: B opens it and gets a copy
         await send(press(A, f"share:{lid}"))
@@ -226,7 +235,7 @@ async def main():
 
         # quiz answers feed the statistics
         POLLS.clear()
-        await send(press(A, f"quiz:{lid}"))
+        await send(press(A, f"qz:{lid}:mcq"))
         await send(answer(A, POLLS[-1], 1))
         await send(cmd(A, "/stats"))
         assert "1 صحيحة من 1" in last(A, "إحصاءاتك")["text"]
@@ -246,7 +255,7 @@ async def main():
         qtoken = last(T, "?start=t_")["text"].split("start=t_")[1].split()[0]
         POLLS.clear()
         await send(cmd(B, f"/start t_{qtoken}"))
-        assert len(POLLS) == 2
+        assert len(POLLS) == 2, POLLS
         await send(answer(B, POLLS[0], 1))
         await send(answer(B, POLLS[1], 0))
         await send(cmd(T, "/results"))
@@ -255,7 +264,7 @@ async def main():
 
         # old-format lecture (kept in memory by an earlier version) moves to disk when opened
         app.user_data[A]["lectures"]["old1"] = dict(ANALYSIS, transcript="[00:00] قديم", time=1.0)
-        await send(press(A, "map:old1"))
+        await send(press(A, "cards:old1"))
         assert "transcript" not in app.user_data[A]["lectures"]["old1"]
         assert (TMP / "data" / "lectures" / str(A) / "old1.json").exists()
 

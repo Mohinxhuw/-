@@ -38,10 +38,9 @@ tr { break-inside: avoid; }
 .answers td:first-child { width: 12%; text-align: center; }
 .cards td { width: 50%; }
 .para { margin: 0 0 6pt; text-align: justify; }
-@page wide { size: A4 landscape; margin: 12mm 14mm 16mm 14mm; }
-.mmpage { page: wide; page-break-before: always; page-break-after: always; text-align: center; }
-.mmpage h2 { text-align: right; margin-top: 0; }
-img.mindmap { max-width: 100%; max-height: 160mm; border: 0.6pt solid #cfd8e1; border-radius: 6pt; }
+.division { page-break-inside: avoid; margin-bottom: 10pt; }
+img.mindmap { max-width: 100%; max-height: 95mm; border: 0.6pt solid #cfd8e1; border-radius: 6pt; }
+.answer { background: #f3f6f9; border-radius: 4pt; padding: 6pt 10pt; margin-top: 4pt; font-size: 10.5pt; }
 .compare td:first-child { background: #eef3f8; width: 22%; }
 .cover-note { font-size: 9pt; color: #7a8796; margin-top: 4pt; }
 """
@@ -54,20 +53,21 @@ html { direction: ltr; }
 ul { padding-right: 0; padding-left: 16pt; }
 .q ul { padding-right: 0; padding-left: 6pt; }
 th, td { text-align: left; }
-.mmpage h2 { text-align: left; }
 """
 
 LABELS = {
     "ar": {"summary_title": "ملخص المحاضرة", "duration": "المدة", "source": "المصدر",
            "times_note": "الأرقام بجانب النقاط هي وقت شرحها في التسجيل.", "summary": "الملخص",
-           "mindmap": "الخريطة الذهنية", "comparisons": "جداول المقارنة", "glossary": "المصطلحات",
+           "mindmap": "التقسيمات", "comparisons": "جداول المقارنة", "essay": "أسئلة مقالية",
+           "model_answer": "نموذج الإجابة", "glossary": "المصطلحات",
            "term": "المصطلح", "arabic": "بالعربية", "meaning": "المعنى", "mcq": "أسئلة الاختيار من متعدد",
            "answers": "الإجابات", "question": "السؤال", "answer_expl": "الإجابة والشرح", "tf": "أسئلة صح أو خطأ",
            "true": "صح", "false": "خطأ", "cards": "بطاقات المراجعة", "card_q": "السؤال", "card_a": "الجواب",
            "transcript": "النص الكامل", "letters": "أبجدهوزحطي"},
     "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
            "times_note": "The times next to each point show where it is explained in the recording.",
-           "summary": "Summary", "mindmap": "Mind map", "comparisons": "Comparison tables", "glossary": "Glossary",
+           "summary": "Summary", "mindmap": "Classifications", "comparisons": "Comparison tables",
+           "glossary": "Glossary", "essay": "Essay questions", "model_answer": "Model answer",
            "term": "Term", "arabic": "Arabic", "meaning": "Meaning", "mcq": "Multiple-choice questions",
            "answers": "Answers", "question": "Question", "answer_expl": "Answer and explanation",
            "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
@@ -110,11 +110,15 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
             parts.append(f"<li>{e(p.get('text', ''))} {_t(p.get('time', ''), source_url)}</li>")
         parts.append("</ul>")
 
-    mm_png = mindmap.render_png(result.get("mindmap") or {}, rtl=lang == "ar")
-    if mm_png:
-        b64 = base64.standard_b64encode(mm_png).decode()
-        parts.append(f'<div class="mmpage"><h2>{L["mindmap"]}</h2>'
-                     f'<img class="mindmap" src="data:image/png;base64,{b64}"></div>')
+    divisions = result.get("divisions") or []
+    if divisions:
+        parts.append(f'<h2>{L["mindmap"]}</h2>')
+        for d in divisions:
+            png = mindmap.render_png(d, rtl=lang == "ar")
+            if png:
+                b64 = base64.standard_b64encode(png).decode()
+                parts.append(f'<div class="division"><h3>{e(d.get("title", ""))} {_t(d.get("time", ""), source_url)}</h3>'
+                             f'<img class="mindmap" src="data:image/png;base64,{b64}"></div>')
 
     comps = result.get("comparisons", [])
     if comps:
@@ -160,6 +164,13 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
             parts.append(f"<tr><td>{i}</td><td><b>{verdict}</b><br>{e(t.get('explanation', ''))} "
                          f"{_t(t.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
+
+    essays = result.get("essay", [])
+    if essays:
+        parts.append(f"<h2>{L['essay']}</h2>")
+        for i, q in enumerate(essays, 1):
+            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b> {_t(q.get("time", ""), source_url)}'
+                         f'<div class="answer"><b>{L["model_answer"]}:</b> {e(q.get("model_answer", ""))}</div></div>')
 
     cards = result.get("flashcards", [])
     if cards:
