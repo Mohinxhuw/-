@@ -14,7 +14,7 @@ from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
                           PicklePersistence, filters)
 
-from lecturebot import config, materials, pipeline
+from lecturebot import config, materials, mindmap, pipeline, render, study
 from lecturebot.analyze import MAJOR_NAMES, AnalysisError
 from lecturebot.media import Source, download_url, find_media_url
 from lecturebot.transcribe import DIALECTS
@@ -22,10 +22,12 @@ from lecturebot.transcribe import DIALECTS
 logging.basicConfig(level=logging.DEBUG if config.DEBUG else logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("fontTools").setLevel(logging.WARNING)  # WeasyPrint's font subsetting is chatty
 log = logging.getLogger("lecturebot")
 
 CLOUD_DOWNLOAD_LIMIT = 20 * 1024 * 1024  # Telegram's cloud Bot API refuses bigger downloads
-KEEP_LECTURES = 5                        # results kept per student for the quiz/cards buttons
+KEEP_LECTURES = config.KEEP_LECTURES     # lectures kept per student for the study buttons and /exam
+ASK_HISTORY = 6                          # earlier question/answer turns sent with a new question
 JOBS = asyncio.Semaphore(config.MAX_PARALLEL_JOBS)
 # A local Bot API server answers getFile only after it has fetched the whole file from Telegram,
 # which takes minutes for a long recording; the library's default is a few seconds.
@@ -43,6 +45,8 @@ WELCOME = (
     "• كل ذلك في ملف PDF جاهز للمذاكرة\n\n"
     "🧩 المحاضرة على عدة أجزاء أو رسائل صوتية؟ أرسلها كلها متتالية، وأجمعها في ملخص واحد.\n"
     "📎 عندك شرائح المحاضرة (PDF أو PowerPoint) أو صور السبورة؟ أرسلها مع التسجيل لملخص أدق.\n"
+    "🧠 بعد كل محاضرة: خريطة ذهنية، وجداول مقارنة، واسألني عن أي شيء فيها، أو اطلب شرحاً أبسط.\n"
+    "🔁 /review مراجعة يومية للبطاقات بتذكير · 🌙 /exam ملخص ليلة الاختبار لعدة محاضرات\n"
     "🎓 /major لاختيار تخصصك · 🗣 /dialect للهجة المحاضر\n"
     "🔒 لا أحتفظ بتسجيلاتك: أحذفها فور الانتهاء. /privacy للتفاصيل."
 )
@@ -78,8 +82,11 @@ def _result_keyboard(lid: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧪 اختبرني", callback_data=f"quiz:{lid}"),
          InlineKeyboardButton("✅❌ صح أو خطأ", callback_data=f"tf:{lid}")],
         [InlineKeyboardButton("🃏 بطاقات المراجعة", callback_data=f"cards:{lid}"),
-         InlineKeyboardButton("📄 النص الكامل", callback_data=f"txt:{lid}")],
-        [InlineKeyboardButton("🗑 حذف", callback_data=f"del:{lid}")],
+         InlineKeyboardButton("🧠 الخريطة الذهنية", callback_data=f"map:{lid}")],
+        [InlineKeyboardButton("❓ اسألني عن المحاضرة", callback_data=f"ask:{lid}"),
+         InlineKeyboardButton("💡 اشرح لي أبسط", callback_data=f"simp:{lid}")],
+        [InlineKeyboardButton("📄 النص الكامل", callback_data=f"txt:{lid}"),
+         InlineKeyboardButton("🗑 حذف", callback_data=f"del:{lid}")],
     ])
 
 
@@ -198,7 +205,7 @@ async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    for key in ("lectures", "pending_images", "pending_docs", "parts"):
+    for key in ("lectures", "pending_images", "pending_docs", "parts", "deck", "ask", "ask_history", "exam_sel"):
         context.user_data.pop(key, None)
     await update.effective_message.reply_text("🗑 حذفت كل محاضراتك وملفاتك المحفوظة.")
 
@@ -271,6 +278,9 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = find_media_url(update.effective_message.text)
+    if not url and context.user_data.get("ask"):
+        await _answer_question(update, context)
+        return
     if url:
         await _add_part(update, context, {"url": url, "title": "", "ts": time.time()})
     else:
@@ -412,12 +422,15 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
 
         lid = uuid.uuid4().hex[:8]
         lectures = ud.setdefault("lectures", {})
-        lectures[lid] = {"title": result.analysis.get("title", ""), "mcq": result.analysis.get("mcq", []),
-                         "true_false": result.analysis.get("true_false", []),
-                         "flashcards": result.analysis.get("flashcards", []),
-                         "transcript": result.transcript_text, "time": time.time()}
+        a = result.analysis
+        lectures[lid] = {key: a.get(key, []) for key in ("mcq", "true_false", "flashcards", "sections", "glossary",
+                                                         "comparisons")}
+        lectures[lid].update(title=a.get("title", ""), subject=a.get("subject", ""), overview=a.get("overview", ""),
+                             mindmap=a.get("mindmap", {}), transcript=result.transcript_text, time=time.time())
         for old in sorted(lectures, key=lambda k: lectures[k]["time"])[:-KEEP_LECTURES]:
             del lectures[old]
+        added = study.add_cards(ud.setdefault("deck", []), a.get("flashcards", []), a.get("title", ""))
+        ud.setdefault("reminder_hour", config.DEFAULT_REMINDER_HOUR)
 
         await status.delete()
         await context.bot.send_message(chat_id, _quick_summary(result.analysis, sender.count > 0),
@@ -425,8 +438,13 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
         with open(result.pdf_path, "rb") as fh:
             await context.bot.send_document(chat_id, fh, filename=result.pdf_path.name,
                                             reply_markup=_result_keyboard(lid),
-                                            caption="📄 الملخص الكامل: المحاور، والمصطلحات، والأسئلة مع الإجابات، "
-                                                    "والبطاقات، والنص الكامل.")
+                                            caption="📄 الملخص الكامل: المحاور، والخريطة الذهنية، والمقارنات، "
+                                                    "والمصطلحات، والأسئلة مع الإجابات، والبطاقات، والنص الكامل.")
+        if added:
+            hour = ud.get("reminder_hour")
+            when = f"كل يوم الساعة {_hour_name(hour)}" if hour is not None else "متى أرسلت /review"
+            await context.bot.send_message(chat_id, f"🔁 أضفت بطاقات هذه المحاضرة ({added}) لمراجعتك اليومية، وأذكّرك بها {when}. "
+                                                    "/reminder لتغيير الوقت.")
     except pipeline.LectureTooLong:
         await status.edit_text(f"⚠️ المحاضرة أطول من {config.MAX_LECTURE_MINUTES} دقيقة. قسّمها وأرسلها على دفعات.")
     except AnalysisError as e:
@@ -480,10 +498,30 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
         return
 
-    lec = context.user_data.get("lectures", {}).get(arg)
+    if action == "rev":
+        await _review_button(update, context, arg)
+        return
+    if action == "rem":
+        context.user_data["reminder_hour"] = None if arg == "off" else int(arg)
+        await q.edit_message_text("🔕 أوقفت التذكير اليومي. /review للمراجعة متى شئت." if arg == "off"
+                                  else f"⏰ سأذكّرك بالمراجعة كل يوم الساعة {_hour_name(int(arg))}.")
+        return
+    if action == "ex":
+        await _exam_button(update, context, arg)
+        return
+    if action == "askend":
+        context.user_data.pop("ask", None)
+        context.user_data.pop("ask_history", None)
+        await q.edit_message_reply_markup(None)
+        await context.bot.send_message(chat_id, "👍 انتهت الأسئلة. أرسل محاضرة جديدة متى شئت.")
+        return
+
+    lid, _, extra = arg.partition(":")
+    lec = context.user_data.get("lectures", {}).get(lid)
     if not lec:
         await context.bot.send_message(chat_id, "لم أعد أحتفظ بهذه المحاضرة. أرسلها من جديد.")
         return
+    arg = lid
 
     if action == "quiz":
         for i, item in enumerate(lec["mcq"], 1):
@@ -504,6 +542,38 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                for c in chunk)
             await context.bot.send_message(chat_id, ("🃏 اضغط على الجواب المخفي لكشفه\n\n" if start_i == 0 else "")
                                            + text, parse_mode=ParseMode.HTML)
+    elif action == "map":
+        png = await asyncio.to_thread(mindmap.render_png, lec.get("mindmap") or {})
+        if png:
+            await context.bot.send_document(chat_id, png, filename=pipeline.safe_name(lec["title"]) + "-mindmap.png",
+                                            caption="🧠 الخريطة الذهنية للمحاضرة")
+        else:
+            await context.bot.send_message(chat_id, "لا توجد خريطة ذهنية لهذه المحاضرة. أعد إرسالها لتحصل عليها.")
+    elif action == "ask":
+        context.user_data["ask"], context.user_data["ask_history"] = lid, []
+        await context.bot.send_message(
+            chat_id, f"❓ اكتب سؤالك عن محاضرة «{lec['title']}»، وأجيبك من كلام المحاضر مع وقت الشرح.\n"
+                     "يمكنك أن تسأل أكثر من سؤال. للخروج اضغط «إنهاء».",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✔️ إنهاء الأسئلة", callback_data="askend:")]]))
+    elif action == "simp":
+        sections = lec.get("sections", [])
+        if extra:
+            i = int(extra)
+            if i < len(sections):
+                await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+                try:
+                    text = await asyncio.to_thread(study.explain, lec, sections[i])
+                except AnalysisError as e:
+                    log.warning("explain failed: %s", e)
+                    text = "⚠️ تعذّر الشرح الآن. حاول بعد قليل."
+                await _send_long(context, chat_id, f"💡 {sections[i].get('heading', '')}\n\n{text}")
+        elif sections:
+            rows = [[InlineKeyboardButton(s.get("heading", "")[:60], callback_data=f"simp:{lid}:{i}")]
+                    for i, s in enumerate(sections[:20])]
+            await context.bot.send_message(chat_id, "💡 أي جزء تريد أن أشرحه لك بأسلوب أبسط؟",
+                                           reply_markup=InlineKeyboardMarkup(rows))
+        else:
+            await context.bot.send_message(chat_id, "أعد إرسال المحاضرة لتستخدم هذه الميزة.")
     elif action == "txt":
         name = pipeline.safe_name(lec["title"]) + ".txt"
         await context.bot.send_document(chat_id, lec["transcript"].encode("utf-8"), filename=name,
@@ -523,6 +593,201 @@ async def _send_quiz(context, chat_id: int, question: str, options: list[str], c
     except TelegramError as e:
         log.warning("poll failed: %s", e)
     await asyncio.sleep(0.4)
+
+
+# ---------- study tools ----------
+
+def _hour_name(h: int) -> str:
+    if h == 0:
+        return "12 منتصف الليل"
+    if h < 12:
+        return f"{h} صباحاً"
+    if h == 12:
+        return "12 ظهراً"
+    return f"{h - 12} " + ("عصراً" if h < 17 else "مساءً")
+
+
+async def _send_long(context, chat_id: int, text: str, **kw) -> None:
+    for i in range(0, len(text), 4000):
+        await context.bot.send_message(chat_id, text[i:i + 4000], **kw)
+
+
+async def _answer_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ud, msg = context.user_data, update.effective_message
+    lec = ud.get("lectures", {}).get(ud["ask"])
+    if not lec:
+        ud.pop("ask", None)
+        await msg.reply_text("لم أعد أحتفظ بهذه المحاضرة. أرسلها من جديد.")
+        return
+    await context.bot.send_chat_action(msg.chat_id, ChatAction.TYPING)
+    history = ud.setdefault("ask_history", [])
+    try:
+        answer = await asyncio.to_thread(study.ask, lec, msg.text, history[-2 * ASK_HISTORY:])
+    except AnalysisError as e:
+        log.warning("question failed: %s", e)
+        await msg.reply_text("⚠️ تعذّر الإجابة الآن. أعد السؤال بعد قليل.")
+        return
+    history += [{"role": "user", "content": msg.text}, {"role": "assistant", "content": answer}]
+    end = InlineKeyboardMarkup([[InlineKeyboardButton("✔️ إنهاء الأسئلة", callback_data="askend:")]])
+    for i in range(0, len(answer), 4000):
+        last = i + 4000 >= len(answer)
+        await msg.reply_text(answer[i:i + 4000], reply_markup=end if last else None)
+
+
+# spaced review: one card at a time; "show answer", then "knew it" / "didn't"
+
+def _card_text(card: dict, reveal: bool) -> str:
+    text = f"🃏 <b>{escape(card['front'])}</b>"
+    if reveal:
+        text += f"\n\n{escape(card['back'])}"
+    return text + f"\n\n<i>{escape(card.get('title', ''))}</i>"
+
+
+async def _next_card(context, chat_id: int) -> None:
+    ud = context.user_data
+    done = ud.get("reviewed_today", {})
+    t = study.today().isoformat()
+    count = done.get("n", 0) if done.get("date") == t else 0
+    due = study.due_cards(ud.get("deck", []))
+    if not due or count >= config.REVIEW_CARDS_PER_DAY:
+        left = f"\nالمتبقي للغد: {len(due)}" if due else ""
+        await context.bot.send_message(chat_id, f"🎉 أحسنت! أنهيت مراجعة اليوم.\nراجعت: {count}{left}")
+        return
+    card = due[0]
+    await context.bot.send_message(
+        chat_id, f"🔁 المتبقي اليوم: {min(len(due), config.REVIEW_CARDS_PER_DAY - count)}\n\n" + _card_text(card, False),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👁 اكشف الجواب", callback_data=f"rev:show:{card['id']}")]]))
+
+
+async def review_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.user_data.get("deck"):
+        await update.effective_message.reply_text("لا توجد بطاقات بعد. أرسل محاضرة، وتُضاف بطاقاتها لمراجعتك اليومية.")
+        return
+    await _next_card(context, update.effective_chat.id)
+
+
+async def _review_button(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
+    q, ud = update.callback_query, context.user_data
+    step, _, cid = arg.partition(":")
+    if step == "start":
+        await _next_card(context, q.message.chat_id)
+        return
+    card = next((c for c in ud.get("deck", []) if c["id"] == cid), None)
+    if not card:
+        return
+    if step == "show":
+        await q.edit_message_text(_card_text(card, True), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✅ عرفتها", callback_data=f"rev:ok:{cid}"),
+              InlineKeyboardButton("❌ لم أعرفها", callback_data=f"rev:no:{cid}")]]))
+        return
+    study.grade(card, step == "ok")
+    t = study.today().isoformat()
+    done = ud.get("reviewed_today", {})
+    ud["reviewed_today"] = {"date": t, "n": (done.get("n", 0) if done.get("date") == t else 0) + 1}
+    mark = "✅" if step == "ok" else "❌ سأعيدها لك غداً"
+    await q.edit_message_text(_card_text(card, True) + f"\n{mark}", parse_mode=ParseMode.HTML)
+    await _next_card(context, q.message.chat_id)
+
+
+async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    hours = [6, 8, 12, 16, 18, 20, 21, 22]
+    rows = [[InlineKeyboardButton(_hour_name(h), callback_data=f"rem:{h}") for h in hours[i:i + 2]]
+            for i in range(0, len(hours), 2)]
+    rows.append([InlineKeyboardButton("🔕 إيقاف التذكير", callback_data="rem:off")])
+    await update.effective_message.reply_text("⏰ متى أذكّرك بمراجعة البطاقات كل يوم؟",
+                                              reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _daily_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Every 10 minutes: remind students whose hour has come and who have cards due."""
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+
+    now = dt.datetime.now(ZoneInfo(config.REMINDER_TZ))
+    today = now.date().isoformat()
+    for user_id, ud in list(context.application.user_data.items()):
+        hour = ud.get("reminder_hour")
+        if hour is None or now.hour != hour or ud.get("reminded_on") == today:
+            continue
+        due = study.due_cards(ud.get("deck", []))
+        if not due:
+            continue
+        ud["reminded_on"] = today
+        try:
+            await context.bot.send_message(
+                user_id, f"🔁 حان وقت المراجعة! بطاقات اليوم: {min(len(due), config.REVIEW_CARDS_PER_DAY)}\n"
+                         "دقائق قليلة تثبّت المعلومة في ذاكرتك.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("▶️ ابدأ المراجعة", callback_data="rev:start")]]))
+        except TelegramError as e:
+            log.info("reminder to %s failed: %s", user_id, e)
+
+
+# exam-night summary: pick lectures, then one PDF
+
+def _exam_keyboard(ud: dict) -> InlineKeyboardMarkup:
+    lectures = ud.get("lectures", {})
+    sel = set(ud.get("exam_sel", []))
+    order = sorted(lectures, key=lambda k: lectures[k]["time"], reverse=True)[:20]
+    rows = [[InlineKeyboardButton(("✅ " if k in sel else "▫️ ") + (lectures[k]["title"] or "محاضرة")[:50],
+                                  callback_data=f"ex:t:{k}")] for k in order]
+    rows.append([InlineKeyboardButton("☑️ الكل", callback_data="ex:all:"),
+                 InlineKeyboardButton(f"🌙 جهّز الملخص ({len(sel)})", callback_data="ex:go:")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def exam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.user_data.get("lectures"):
+        await update.effective_message.reply_text("لا توجد محاضرات محفوظة بعد. أرسل محاضراتك أولاً.")
+        return
+    context.user_data["exam_sel"] = []
+    await update.effective_message.reply_text("🌙 <b>ملخص ليلة الاختبار</b>\nاختر محاضرات المادة، ثم اضغط «جهّز الملخص».",
+                                              parse_mode=ParseMode.HTML, reply_markup=_exam_keyboard(context.user_data))
+
+
+async def _exam_button(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
+    q, ud = update.callback_query, context.user_data
+    step, _, lid = arg.partition(":")
+    lectures = ud.get("lectures", {})
+    sel = [k for k in ud.get("exam_sel", []) if k in lectures]
+    if step == "t":
+        sel = [k for k in sel if k != lid] if lid in sel else sel + [lid]
+    elif step == "all":
+        sel = sorted(lectures, key=lambda k: lectures[k]["time"], reverse=True)[:20]
+    if step in ("t", "all"):
+        ud["exam_sel"] = sel
+        try:
+            await q.edit_message_reply_markup(_exam_keyboard(ud))
+        except BadRequest:
+            pass
+        return
+    if not sel:
+        await context.bot.send_message(q.message.chat_id, "اختر محاضرة واحدة على الأقل.")
+        return
+    chosen = sorted((lectures[k] for k in sel), key=lambda l: l["time"])
+    if any(not l.get("sections") for l in chosen):
+        await context.bot.send_message(q.message.chat_id, "⚠️ بعض المحاضرات المختارة قديمة ولا تحتوي على الملخص "
+                                                          "اللازم. أعد إرسالها أو اخترها بدونها.")
+        return
+    await q.edit_message_reply_markup(None)
+    status = await context.bot.send_message(q.message.chat_id, f"🌙 أجهّز ملخص ليلة الاختبار من {len(chosen)} محاضرة…")
+    work = Path(tempfile.mkdtemp(prefix="exam_", dir=_work_root()))
+    try:
+        summary = await asyncio.to_thread(study.exam_summary, chosen)
+        html = render.build_exam_html(summary, [l["title"] for l in chosen])
+        pdf = await asyncio.to_thread(render.write_pdf, html,
+                                      work / (pipeline.safe_name(summary.get("title") or "exam") + ".pdf"))
+        await status.delete()
+        with open(pdf, "rb") as fh:
+            await context.bot.send_document(q.message.chat_id, fh, filename=pdf.name,
+                                            caption="🌙 ملخص ليلة الاختبار: أهم الأفكار، وما يجب حفظه، "
+                                                    "ونقاط يخلط فيها الطلاب، واختبر نفسك. بالتوفيق!")
+        ud["exam_sel"] = []
+    except AnalysisError as e:
+        log.warning("exam summary failed: %s", e)
+        await status.edit_text("⚠️ تعذّر تجهيز الملخص الآن. حاول بعد قليل.")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------- startup ----------
@@ -572,6 +837,9 @@ def main() -> None:
     app.add_handler(CommandHandler("dialect", dialect_cmd))
     app.add_handler(CommandHandler("privacy", privacy_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
+    app.add_handler(CommandHandler("review", review_cmd))
+    app.add_handler(CommandHandler("reminder", reminder_cmd))
+    app.add_handler(CommandHandler("exam", exam_cmd))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
     app.add_handler(MessageHandler(
         filters.AUDIO | filters.VOICE | filters.VIDEO | filters.VIDEO_NOTE
@@ -580,6 +848,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_error_handler(on_error)
+    app.job_queue.run_repeating(_daily_reminders, interval=600, first=60)
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

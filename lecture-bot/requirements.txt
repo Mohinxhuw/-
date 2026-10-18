@@ -7,3 +7,4 @@ yt-dlp>=2026.8.19
 python-dotenv>=1.0
 python-pptx>=1.0
 pypdfium2>=4
+tzdata

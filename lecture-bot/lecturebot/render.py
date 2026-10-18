@@ -1,9 +1,10 @@
 """Build the study PDF (right-to-left Arabic) from the analysis and transcript."""
+import base64
 import datetime as dt
 from html import escape
 from pathlib import Path
 
-from . import config
+from . import config, mindmap
 from .media import fmt_time, parse_time, timestamp_url
 from .transcribe import Segment
 
@@ -37,6 +38,11 @@ tr { break-inside: avoid; }
 .answers td:first-child { width: 12%; text-align: center; }
 .cards td { width: 50%; }
 .para { margin: 0 0 6pt; text-align: justify; }
+@page wide { size: A4 landscape; margin: 12mm 14mm 16mm 14mm; }
+.mmpage { page: wide; page-break-before: always; page-break-after: always; text-align: center; }
+.mmpage h2 { text-align: right; margin-top: 0; }
+img.mindmap { max-width: 100%; max-height: 160mm; border: 0.6pt solid #cfd8e1; border-radius: 6pt; }
+.compare td:first-child { background: #eef3f8; width: 22%; }
 .cover-note { font-size: 9pt; color: #7a8796; margin-top: 4pt; }
 """
 
@@ -76,6 +82,22 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
         for p in sec.get("points", []):
             parts.append(f"<li>{e(p.get('text', ''))} {_t(p.get('time', ''), source_url)}</li>")
         parts.append("</ul>")
+
+    mm_png = mindmap.render_png(result.get("mindmap") or {})
+    if mm_png:
+        b64 = base64.standard_b64encode(mm_png).decode()
+        parts.append(f'<div class="mmpage"><h2>الخريطة الذهنية</h2>'
+                     f'<img class="mindmap" src="data:image/png;base64,{b64}"></div>')
+
+    comps = result.get("comparisons", [])
+    if comps:
+        parts.append("<h2>جداول المقارنة</h2>")
+        for c in comps:
+            head = "".join(f"<th>{e(h)}</th>" for h in c["headers"])
+            body = "".join("<tr>" + "".join(f"<td>{'<b>' + e(cell) + '</b>' if j == 0 else e(cell)}</td>"
+                                            for j, cell in enumerate(r)) + "</tr>" for r in c["rows"])
+            parts.append(f'<h3>{e(c["title"])} {_t(c.get("time", ""), source_url)}</h3>'
+                         f'<table class="compare"><thead><tr>{head}</tr></thead>{body}</table>')
 
     if result.get("glossary"):
         parts.append("<h2>المصطلحات</h2><table><thead><tr><th>المصطلح</th><th>بالعربية</th><th>المعنى</th></tr></thead>")
@@ -136,3 +158,35 @@ def write_pdf(html: str, out_path: Path) -> Path:
 
 def transcript_txt(paragraphs: list[Segment]) -> str:
     return "\n\n".join(f"[{fmt_time(p.start)}] {p.text}" for p in paragraphs)
+
+
+def build_exam_html(summary: dict, lecture_titles: list[str]) -> str:
+    """The exam-night summary across several lectures."""
+    e = escape
+    parts = [f"<h1>{e(summary.get('title') or 'ملخص ليلة الاختبار')}</h1>",
+             f'<div class="meta">{len(lecture_titles)} محاضرة · {dt.date.today().strftime("%Y-%m-%d")}</div>']
+    if summary.get("overview"):
+        parts.append(f'<div class="overview">{e(summary["overview"])}</div>')
+    parts.append('<div class="cover-note">المحاضرات: ' + "، ".join(e(t) for t in lecture_titles) + "</div>")
+
+    parts.append("<h2>أهم الأفكار</h2>")
+    for t in summary.get("topics", []):
+        src = f' <span class="t">{e(t["lecture"])}</span>' if t.get("lecture") else ""
+        parts.append(f"<h3>{e(t.get('heading', ''))}{src}</h3><ul>"
+                     + "".join(f"<li>{e(p)}</li>" for p in t.get("points", [])) + "</ul>")
+    if summary.get("must_memorize"):
+        parts.append("<h2>احفظها جيداً</h2><table><thead><tr><th>العنصر</th><th>التفصيل</th></tr></thead>"
+                     + "".join(f"<tr><td><b>{e(m['item'])}</b></td><td>{e(m['detail'])}</td></tr>"
+                               for m in summary["must_memorize"]) + "</table>")
+    if summary.get("pitfalls"):
+        parts.append("<h2>انتبه: نقاط يخلط فيها الطلاب</h2><ul>"
+                     + "".join(f"<li>{e(p)}</li>" for p in summary["pitfalls"]) + "</ul>")
+    if summary.get("self_test"):
+        parts.append("<h2>اختبر نفسك</h2>")
+        parts += [f'<div class="q"><b>{i}. {e(q["question"])}</b></div>' for i, q in enumerate(summary["self_test"], 1)]
+        parts.append('<h3>الإجابات</h3><table class="answers"><thead><tr><th>السؤال</th><th>الإجابة</th></tr></thead>'
+                     + "".join(f"<tr><td>{i}</td><td>{e(q['answer'])}</td></tr>"
+                               for i, q in enumerate(summary["self_test"], 1)) + "</table>")
+    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/")
+    return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>{css}</style></head>' \
+           f'<body>{"".join(parts)}</body></html>'

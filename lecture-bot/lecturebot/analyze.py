@@ -96,6 +96,38 @@ SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "mindmap": {
+            "type": "object",
+            "properties": {
+                "center": {"type": "string"},
+                "branches": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"label": {"type": "string"},
+                                       "children": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["label", "children"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["center", "branches"],
+            "additionalProperties": False,
+        },
+        "comparisons": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "headers": {"type": "array", "items": {"type": "string"}},
+                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                    "time": {"type": "string"},
+                },
+                "required": ["title", "headers", "rows", "time"],
+                "additionalProperties": False,
+            },
+        },
         "transcript_fixes": {
             "type": "array",
             "items": {
@@ -107,7 +139,7 @@ SCHEMA = {
         },
     },
     "required": ["title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "flashcards",
-                 "transcript_fixes"],
+                 "mindmap", "comparisons", "transcript_fixes"],
     "additionalProperties": False,
 }
 
@@ -140,6 +172,15 @@ is explained. False statements must be plausible, changing one detail of somethi
 Write about one per five minutes of lecture, at least 5 and at most 15. Keep each statement under 280 \
 characters and each explanation under 190 characters.
 - flashcards: front is a question or term, back is the short answer. Between 8 and 25 cards.
+- mindmap: the lecture as a mind map. center is the lecture's topic in 2 to 5 words. 4 to 8 branches \
+for the main ideas, in the lecture's order, each with a label of 2 to 6 words and 2 to 5 children: \
+short phrases (at most 8 words) with the key facts under that idea.
+- comparisons: a table for each comparison the lecturer made or that the lecture clearly sets up \
+(types, stages, advantages and disadvantages, differences between two concepts). headers are the \
+column titles: the first is the aspect being compared, the others are the things compared (2 to 4). \
+Each row starts with the aspect, followed by one short cell per compared thing. 3 to 8 rows. time is \
+where the comparison is explained. Use an empty list when the lecture compares nothing; never invent \
+a comparison the lecture does not support.
 - transcript_fixes: words the recognizer got clearly wrong that matter for studying, mostly English \
 terms written in Arabic letters, mapped to the correct spelling. Only include fixes you are confident \
 about; each "wrong" value must appear exactly as written in the transcript.
@@ -313,7 +354,16 @@ def _clean(result: dict) -> None:
     result["true_false"] = [t for t in result.get("true_false", [])
                             if (t.get("statement") or "").strip() and isinstance(t.get("answer"), bool)]
     # The model sometimes copies the transcript's "[mm:ss]" brackets into time fields.
-    items = result.get("sections", []) + result["mcq"] + result["true_false"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])]
+    width_ok = []
+    for c in result.get("comparisons", []):
+        n = len(c.get("headers", []))
+        rows = [r for r in c.get("rows", []) if len(r) == n]
+        if n >= 2 and rows:
+            c["rows"] = rows
+            width_ok.append(c)
+    result["comparisons"] = width_ok
+    result.setdefault("mindmap", {"center": "", "branches": []})
+    items = result.get("sections", []) + result["mcq"] + result["true_false"] + result["comparisons"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])]
     for item in items:
         if isinstance(item.get("time"), str):
             item["time"] = item["time"].strip(" []")

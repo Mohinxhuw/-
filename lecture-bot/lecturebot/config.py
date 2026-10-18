@@ -53,6 +53,13 @@ MAX_PARTS = int(os.environ.get("MAX_PARTS", "8"))
 # Photos sent before a lecture are attached to it if they are newer than this.
 PENDING_IMAGES_TTL_MINUTES = int(os.environ.get("PENDING_IMAGES_TTL_MINUTES", "120"))
 
+# Lectures kept per student (for the study buttons, questions and the exam-night summary).
+KEEP_LECTURES = int(os.environ.get("KEEP_LECTURES", "30"))
+# Daily review reminder: students' time zone and the default hour (24h); /reminder changes it.
+REMINDER_TZ = os.environ.get("REMINDER_TZ", "Asia/Riyadh")
+DEFAULT_REMINDER_HOUR = int(os.environ.get("DEFAULT_REMINDER_HOUR", "20"))
+REVIEW_CARDS_PER_DAY = int(os.environ.get("REVIEW_CARDS_PER_DAY", "25"))
+
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/tmp/lecturebot"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
 FONTS_DIR = BASE_DIR / "fonts"
