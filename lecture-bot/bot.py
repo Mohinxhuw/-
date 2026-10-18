@@ -27,6 +27,9 @@ log = logging.getLogger("lecturebot")
 CLOUD_DOWNLOAD_LIMIT = 20 * 1024 * 1024  # Telegram's cloud Bot API refuses bigger downloads
 KEEP_LECTURES = 5                        # results kept per student for the quiz/cards buttons
 JOBS = asyncio.Semaphore(config.MAX_PARALLEL_JOBS)
+# A local Bot API server answers getFile only after it has fetched the whole file from Telegram,
+# which takes minutes for a long recording; the library's default is a few seconds.
+BIG_FILE_TIMEOUTS = {"read_timeout": 1800, "write_timeout": 60, "connect_timeout": 30, "pool_timeout": 30}
 _waiting = 0
 
 WELCOME = (
@@ -326,9 +329,9 @@ async def _download_part(context: ContextTypes.DEFAULT_TYPE, part: dict, work: P
     if part.get("url"):
         source = await asyncio.to_thread(download_url, part["url"], work, f"part{i}")
         return source
-    f = await context.bot.get_file(part["file_id"])
+    f = await context.bot.get_file(part["file_id"], **BIG_FILE_TIMEOUTS)
     path = work / (f"part{i}" + (Path(f.file_path).suffix if f.file_path else ""))
-    await f.download_to_drive(path)
+    await f.download_to_drive(path, read_timeout=BIG_FILE_TIMEOUTS["read_timeout"])
     _drop_local_copy(f.file_path)
     return Source(path=path, title=part.get("title", ""))
 
@@ -368,20 +371,23 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
                 _waiting -= 1
                 queued = False
             await status.edit_text("⬇️ أنزّل المحاضرة…")
-            try:
-                sources = [await _download_part(context, p, work, i) for i, p in enumerate(parts, 1)]
-            except Exception:
-                log.exception("download failed")
-                await status.edit_text("⚠️ تعذّر تنزيل المحاضرة. إن كانت رابطاً فتأكد أنه عام "
-                                       "(في Google Drive: مشاركة ← أي شخص لديه الرابط).")
-                return
+            sources = []
+            for i, p in enumerate(parts, 1):
+                try:
+                    sources.append(await _download_part(context, p, work, i))
+                except Exception:
+                    log.exception("download failed (part %d, %s)", i, "link" if p.get("url") else "telegram file")
+                    await status.edit_text(
+                        "⚠️ تعذّر تنزيل الرابط. تأكد أنه عام (في Google Drive: مشاركة ← أي شخص لديه الرابط)."
+                        if p.get("url") else "⚠️ تعذّر تنزيل الملف من تيليجرام. أعد إرساله بعد قليل.")
+                    return
             images = []
             for m in images_meta:
-                f = await context.bot.get_file(m["file_id"])
+                f = await context.bot.get_file(m["file_id"], **BIG_FILE_TIMEOUTS)
                 images.append((bytes(await f.download_as_bytearray()), m["mime"]))
             mats = []
             for d in docs_meta:
-                f = await context.bot.get_file(d["file_id"])
+                f = await context.bot.get_file(d["file_id"], **BIG_FILE_TIMEOUTS)
                 data = bytes(await f.download_as_bytearray())
                 _drop_local_copy(f.file_path)
                 try:
