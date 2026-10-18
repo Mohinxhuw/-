@@ -42,7 +42,7 @@ def _layout(data: dict):
     return blocks, heights, max(height, 520)
 
 
-def build_html(data: dict) -> str:
+def build_html(data: dict, rtl: bool = True) -> str:
     blocks, heights, H = _layout(data)
     cx, cy = W / 2, H / 2
     center = data.get("center") or ""
@@ -85,7 +85,7 @@ html, body {{ margin: 0; }}
 body {{ width: {W}px; height: {H}px; position: relative; background: #f6f8fb; font-family: Cairo; }}
 svg {{ position: absolute; left: 0; top: 0; }}
 .node {{ position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
-         text-align: center; padding: 8px 14px; direction: rtl; border-radius: 16px; line-height: 1.5; }}
+         text-align: center; padding: 8px 14px; direction: {'rtl' if rtl else 'ltr'}; border-radius: 16px; line-height: 1.5; }}
 .center {{ background: {NAVY}; color: #fff; font-size: 30px; font-weight: 700; border: 5px solid {GOLD}; }}
 .branch {{ color: #fff; font-size: 24px; font-weight: 700; }}
 .child {{ background: #fff; color: #1d2733; font-size: 19px; border: 2.5px solid; }}
@@ -97,7 +97,7 @@ svg {{ position: absolute; left: 0; top: 0; }}
 </body></html>"""
 
 
-def render_png(data: dict, width_px: int = 2400) -> bytes:
+def render_png(data: dict, width_px: int = 2400, rtl: bool = True) -> bytes:
     """PNG of the mind map (empty bytes if there is nothing to draw)."""
     if not data or not data.get("branches"):
         return b""
@@ -106,7 +106,7 @@ def render_png(data: dict, width_px: int = 2400) -> bytes:
     import pypdfium2
     from weasyprint import HTML
 
-    pdf = HTML(string=build_html(data)).write_pdf()
+    pdf = HTML(string=build_html(data, rtl)).write_pdf()
     page = pypdfium2.PdfDocument(pdf)[0]
     img = page.render(scale=width_px / page.get_width()).to_pil()
     buf = io.BytesIO()

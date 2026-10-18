@@ -1,4 +1,4 @@
-"""Build the study PDF (right-to-left Arabic) from the analysis and transcript."""
+"""Build the study PDF from the analysis and transcript: Arabic (right to left) or English (left to right)."""
 import base64
 import datetime as dt
 from html import escape
@@ -46,11 +46,37 @@ img.mindmap { max-width: 100%; max-height: 160mm; border: 0.6pt solid #cfd8e1; b
 .cover-note { font-size: 9pt; color: #7a8796; margin-top: 4pt; }
 """
 
-LETTERS = "أبجدهوزحطي"
+# Left-to-right version of the stylesheet for the English PDF.
+CSS_EN = """
+@page { @bottom-center { content: "Page " counter(page) " of " counter(pages); } }
+html { direction: ltr; }
+.overview { border-right: 0; border-left: 4pt solid #143f62; }
+ul { padding-right: 0; padding-left: 16pt; }
+.q ul { padding-right: 0; padding-left: 6pt; }
+th, td { text-align: left; }
+.mmpage h2 { text-align: left; }
+"""
+
+LABELS = {
+    "ar": {"summary_title": "ملخص المحاضرة", "duration": "المدة", "source": "المصدر",
+           "times_note": "الأرقام بجانب النقاط هي وقت شرحها في التسجيل.", "summary": "الملخص",
+           "mindmap": "الخريطة الذهنية", "comparisons": "جداول المقارنة", "glossary": "المصطلحات",
+           "term": "المصطلح", "arabic": "بالعربية", "meaning": "المعنى", "mcq": "أسئلة الاختيار من متعدد",
+           "answers": "الإجابات", "question": "السؤال", "answer_expl": "الإجابة والشرح", "tf": "أسئلة صح أو خطأ",
+           "true": "صح", "false": "خطأ", "cards": "بطاقات المراجعة", "card_q": "السؤال", "card_a": "الجواب",
+           "transcript": "النص الكامل", "letters": "أبجدهوزحطي"},
+    "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
+           "times_note": "The times next to each point show where it is explained in the recording.",
+           "summary": "Summary", "mindmap": "Mind map", "comparisons": "Comparison tables", "glossary": "Glossary",
+           "term": "Term", "arabic": "Arabic", "meaning": "Meaning", "mcq": "Multiple-choice questions",
+           "answers": "Answers", "question": "Question", "answer_expl": "Answer and explanation",
+           "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
+           "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ"},
+}
 
 
-def _letter(i: int) -> str:
-    return LETTERS[i] if i < len(LETTERS) else str(i + 1)
+def _letter(i: int, letters: str = LABELS["ar"]["letters"]) -> str:
+    return letters[i] if i < len(letters) else str(i + 1)
 
 
 def _t(time_text: str, source_url: str) -> str:
@@ -64,34 +90,35 @@ def _t(time_text: str, source_url: str) -> str:
 
 
 def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", source_url: str = "",
-               duration: float = 0.0) -> str:
-    e = escape
-    parts = [f"<h1>{e(result.get('title') or source_title or 'ملخص المحاضرة')}</h1>"]
-    meta = [m for m in (result.get("subject"), f"المدة {fmt_time(duration)}" if duration else "",
+               duration: float = 0.0, lang: str = "ar") -> str:
+    e, L = escape, LABELS[lang]
+    letter = lambda i: _letter(i, L["letters"])  # noqa: E731
+    parts = [f"<h1>{e(result.get('title') or source_title or L['summary_title'])}</h1>"]
+    meta = [m for m in (result.get("subject"), f"{L['duration']} {fmt_time(duration)}" if duration else "",
                         dt.date.today().strftime("%Y-%m-%d")) if m]
     parts.append(f'<div class="meta">{" · ".join(e(m) for m in meta)}</div>')
     if source_title and source_title != result.get("title"):
-        parts.append(f'<div class="meta">المصدر: {e(source_title)}</div>')
+        parts.append(f'<div class="meta">{L["source"]}: {e(source_title)}</div>')
     if result.get("overview"):
         parts.append(f'<div class="overview">{e(result["overview"])}</div>')
-    parts.append('<div class="cover-note">الأرقام بجانب النقاط هي وقت شرحها في التسجيل.</div>')
+    parts.append(f'<div class="cover-note">{L["times_note"]}</div>')
 
-    parts.append("<h2>الملخص</h2>")
+    parts.append(f"<h2>{L['summary']}</h2>")
     for sec in result.get("sections", []):
         parts.append(f"<h3>{e(sec.get('heading', ''))} {_t(sec.get('time', ''), source_url)}</h3><ul>")
         for p in sec.get("points", []):
             parts.append(f"<li>{e(p.get('text', ''))} {_t(p.get('time', ''), source_url)}</li>")
         parts.append("</ul>")
 
-    mm_png = mindmap.render_png(result.get("mindmap") or {})
+    mm_png = mindmap.render_png(result.get("mindmap") or {}, rtl=lang == "ar")
     if mm_png:
         b64 = base64.standard_b64encode(mm_png).decode()
-        parts.append(f'<div class="mmpage"><h2>الخريطة الذهنية</h2>'
+        parts.append(f'<div class="mmpage"><h2>{L["mindmap"]}</h2>'
                      f'<img class="mindmap" src="data:image/png;base64,{b64}"></div>')
 
     comps = result.get("comparisons", [])
     if comps:
-        parts.append("<h2>جداول المقارنة</h2>")
+        parts.append(f"<h2>{L['comparisons']}</h2>")
         for c in comps:
             head = "".join(f"<th>{e(h)}</th>" for h in c["headers"])
             body = "".join("<tr>" + "".join(f"<td>{'<b>' + e(cell) + '</b>' if j == 0 else e(cell)}</td>"
@@ -100,7 +127,8 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
                          f'<table class="compare"><thead><tr>{head}</tr></thead>{body}</table>')
 
     if result.get("glossary"):
-        parts.append("<h2>المصطلحات</h2><table><thead><tr><th>المصطلح</th><th>بالعربية</th><th>المعنى</th></tr></thead>")
+        parts.append(f"<h2>{L['glossary']}</h2><table><thead><tr><th>{L['term']}</th><th>{L['arabic']}</th>"
+                     f"<th>{L['meaning']}</th></tr></thead>")
         for g in result["glossary"]:
             parts.append(f'<tr><td class="en">{e(g.get("term", ""))}</td><td>{e(g.get("arabic", ""))}</td>'
                          f'<td>{e(g.get("explanation", ""))}</td></tr>')
@@ -108,44 +136,48 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
 
     mcq = result.get("mcq", [])
     if mcq:
-        parts.append("<h2>أسئلة الاختيار من متعدد</h2>")
+        parts.append(f"<h2>{L['mcq']}</h2>")
         for i, q in enumerate(mcq, 1):
-            opts = "".join(f'<li><span class="opt">({_letter(j)})</span> {e(o)}</li>' for j, o in enumerate(q["options"]))
+            opts = "".join(f'<li><span class="opt">({letter(j)})</span> {e(o)}</li>' for j, o in enumerate(q["options"]))
             parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b><ul>{opts}</ul></div>')
-        parts.append('<h3>الإجابات</h3><table class="answers"><thead><tr><th>السؤال</th><th>الإجابة والشرح</th></tr></thead>')
+        parts.append(f'<h3>{L["answers"]}</h3><table class="answers"><thead><tr><th>{L["question"]}</th>'
+                     f'<th>{L["answer_expl"]}</th></tr></thead>')
         for i, q in enumerate(mcq, 1):
             ans = q["options"][q["answer_index"]]
-            parts.append(f"<tr><td>{i}</td><td><b>({_letter(q['answer_index'])}) {e(ans)}</b><br>{e(q.get('explanation', ''))} "
+            parts.append(f"<tr><td>{i}</td><td><b>({letter(q['answer_index'])}) {e(ans)}</b><br>{e(q.get('explanation', ''))} "
                          f"{_t(q.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
 
     tf = result.get("true_false", [])
     if tf:
-        parts.append("<h2>أسئلة صح أو خطأ</h2>")
+        parts.append(f"<h2>{L['tf']}</h2>")
         for i, t in enumerate(tf, 1):
             parts.append(f'<div class="q"><b>{i}. {e(t["statement"])}</b> <span class="opt">( &nbsp; &nbsp; )</span></div>')
-        parts.append('<h3>الإجابات</h3><table class="answers"><thead><tr><th>السؤال</th><th>الإجابة والشرح</th></tr></thead>')
+        parts.append(f'<h3>{L["answers"]}</h3><table class="answers"><thead><tr><th>{L["question"]}</th>'
+                     f'<th>{L["answer_expl"]}</th></tr></thead>')
         for i, t in enumerate(tf, 1):
-            verdict = "صح" if t["answer"] else "خطأ"
+            verdict = L["true"] if t["answer"] else L["false"]
             parts.append(f"<tr><td>{i}</td><td><b>{verdict}</b><br>{e(t.get('explanation', ''))} "
                          f"{_t(t.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
 
     cards = result.get("flashcards", [])
     if cards:
-        parts.append('<h2>بطاقات المراجعة</h2><table class="cards"><thead><tr><th>السؤال</th><th>الجواب</th></tr></thead>')
+        parts.append(f'<h2>{L["cards"]}</h2><table class="cards"><thead><tr><th>{L["card_q"]}</th>'
+                     f'<th>{L["card_a"]}</th></tr></thead>')
         for c in cards:
             parts.append(f"<tr><td>{e(c.get('front', ''))}</td><td>{e(c.get('back', ''))}</td></tr>")
         parts.append("</table>")
 
     if paragraphs:
-        parts.append("<h2>النص الكامل</h2>")
+        parts.append(f"<h2>{L['transcript']}</h2>")
         for p in paragraphs:
             parts.append(f'<p class="para">{_t(fmt_time(p.start), source_url)} {e(p.text)}</p>')
 
-    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/")
-    return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>{css}</style></head>' \
-           f'<body>{"".join(parts)}</body></html>'
+    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/") + (CSS_EN if lang == "en" else "")
+    direction = "rtl" if lang == "ar" else "ltr"
+    return f'<!doctype html><html lang="{lang}" dir="{direction}"><head><meta charset="utf-8"><style>{css}</style>' \
+           f'</head><body>{"".join(parts)}</body></html>'
 
 
 def write_pdf(html: str, out_path: Path) -> Path:

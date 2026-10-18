@@ -183,3 +183,69 @@ def due_cards(deck: list[dict]) -> list[dict]:
 def grade(card: dict, known: bool) -> None:
     card["box"] = min(card["box"] + 1, len(INTERVALS) - 1) if known else 0
     card["due"] = (today() + dt.timedelta(days=INTERVALS[card["box"]])).isoformat()
+
+
+# ---------- audio summary ----------
+
+AUDIO_SYSTEM = """You write the script of a spoken summary of a recorded Arabic university lecture, to \
+be read aloud by a text-to-speech voice for a student listening on the way to university.
+
+Write in clear, natural spoken Modern Standard Arabic, as a friendly teacher would explain it. Cover the \
+main ideas in the lecture's order, with the key definitions and examples; about 500 to 800 words. Say \
+English technical terms in Latin letters once, next to their Arabic meaning. Write only the words to be \
+spoken: no headings, bullets, symbols, emojis, timestamps or Markdown. Use short sentences and full \
+stops so the voice pauses naturally. End with a two-sentence recap."""
+
+
+def audio_script(lec: dict) -> str:
+    notes = {k: lec.get(k) for k in ("title", "overview", "sections", "glossary")}
+    client = anthropic.Anthropic()
+    try:
+        message = client.beta.messages.create(
+            model=config.CLAUDE_MODEL, max_tokens=8000, system=AUDIO_SYSTEM,
+            messages=[{"role": "user", "content": "ملاحظات المحاضرة:\n" + json.dumps(notes, ensure_ascii=False)}],
+            output_config={"effort": "low"}, **FALLBACK,
+        )
+    except anthropic.APIStatusError as e:
+        raise AnalysisError(f"Claude API error {e.status_code}: {e.message}") from e
+    except anthropic.APIConnectionError as e:
+        raise AnalysisError("Could not reach the Claude API") from e
+    return _text(message)
+
+
+# ---------- English version ----------
+
+TRANSLATE_SYSTEM = """You translate a university student's study notes, written in Arabic, into clear \
+academic English for students whose exams are in English. Keep the structure and every item exactly \
+(same sections, points, questions, options, answer indexes and times); translate the text only. Use \
+the standard English terminology of the field. In the glossary, keep "arabic" as the Arabic term and \
+translate the explanation."""
+
+
+def translate(lec: dict) -> dict:
+    from .analyze import SCHEMA
+
+    keys = ("title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "flashcards", "mindmap",
+            "comparisons")
+    schema = {"type": "object", "properties": {k: SCHEMA["properties"][k] for k in keys},
+              "required": list(keys), "additionalProperties": False}
+    notes = {k: lec.get(k) for k in keys}
+    notes["mindmap"] = notes["mindmap"] or {"center": "", "branches": []}
+    client = anthropic.Anthropic()
+    try:
+        with client.beta.messages.stream(
+            model=config.CLAUDE_MODEL, max_tokens=64000, system=TRANSLATE_SYSTEM,
+            messages=[{"role": "user", "content": json.dumps(notes, ensure_ascii=False)}],
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}}, **FALLBACK,
+        ) as stream:
+            message = stream.get_final_message()
+    except anthropic.APIStatusError as e:
+        raise AnalysisError(f"Claude API error {e.status_code}: {e.message}") from e
+    except anthropic.APIConnectionError as e:
+        raise AnalysisError("Could not reach the Claude API") from e
+    if message.stop_reason == "max_tokens":
+        raise AnalysisError("The translation was too long to finish")
+    try:
+        return json.loads(_text(message))
+    except json.JSONDecodeError as e:
+        raise AnalysisError("The model returned invalid JSON") from e

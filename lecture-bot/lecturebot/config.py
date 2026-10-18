@@ -53,12 +53,21 @@ MAX_PARTS = int(os.environ.get("MAX_PARTS", "8"))
 # Photos sent before a lecture are attached to it if they are newer than this.
 PENDING_IMAGES_TTL_MINUTES = int(os.environ.get("PENDING_IMAGES_TTL_MINUTES", "120"))
 
-# Lectures kept per student (for the study buttons, questions and the exam-night summary).
-KEEP_LECTURES = int(os.environ.get("KEEP_LECTURES", "30"))
+# Lectures kept per student in their library (stored on disk under DATA_DIR/lectures).
+KEEP_LECTURES = int(os.environ.get("KEEP_LECTURES", "200"))
 # Daily review reminder: students' time zone and the default hour (24h); /reminder changes it.
 REMINDER_TZ = os.environ.get("REMINDER_TZ", "Asia/Riyadh")
 DEFAULT_REMINDER_HOUR = int(os.environ.get("DEFAULT_REMINDER_HOUR", "20"))
 REVIEW_CARDS_PER_DAY = int(os.environ.get("REVIEW_CARDS_PER_DAY", "25"))
+
+# Audio summary voice (edge-tts). Other Arabic voices: ar-SA-ZariyahNeural, ar-EG-SalmaNeural, ar-AE-HamdanNeural.
+TTS_VOICE = os.environ.get("TTS_VOICE", "ar-SA-HamedNeural")
+TTS_RATE = os.environ.get("TTS_RATE", "-5%")
+
+# Credits: tracked from the start, enforced only once paid plans begin (BILLING_ENABLED=true).
+BILLING_ENABLED = _bool("BILLING_ENABLED")
+FREE_LECTURES = int(os.environ.get("FREE_LECTURES", "1"))          # free trial for every new student
+REFERRALS_PER_CREDIT = int(os.environ.get("REFERRALS_PER_CREDIT", "2"))  # friends invited per free lecture
 
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/tmp/lecturebot"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
