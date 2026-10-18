@@ -97,6 +97,18 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
                          f"{_t(q.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
 
+    tf = result.get("true_false", [])
+    if tf:
+        parts.append("<h2>أسئلة صح أو خطأ</h2>")
+        for i, t in enumerate(tf, 1):
+            parts.append(f'<div class="q"><b>{i}. {e(t["statement"])}</b> <span class="opt">( &nbsp; &nbsp; )</span></div>')
+        parts.append('<h3>الإجابات</h3><table class="answers"><thead><tr><th>السؤال</th><th>الإجابة والشرح</th></tr></thead>')
+        for i, t in enumerate(tf, 1):
+            verdict = "صح" if t["answer"] else "خطأ"
+            parts.append(f"<tr><td>{i}</td><td><b>{verdict}</b><br>{e(t.get('explanation', ''))} "
+                         f"{_t(t.get('time', ''), source_url)}</td></tr>")
+        parts.append("</table>")
+
     cards = result.get("flashcards", [])
     if cards:
         parts.append('<h2>بطاقات المراجعة</h2><table class="cards"><thead><tr><th>السؤال</th><th>الجواب</th></tr></thead>')

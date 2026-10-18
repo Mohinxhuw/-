@@ -8,6 +8,7 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 YOUTUBE_RE = re.compile(r"(https?://)?(www\.|m\.)?(youtube\.com/(watch\?v=|shorts/|live/)|youtu\.be/)[\w\-]+[^\s]*")
+DRIVE_RE = re.compile(r"(https?://)?(drive|docs)\.google\.com/[^\s]+")
 
 
 @dataclass
@@ -26,6 +27,22 @@ def find_youtube_url(text: str) -> str | None:
     return url if url.startswith("http") else "https://" + url
 
 
+def find_media_url(text: str) -> str | None:
+    """A YouTube or Google Drive link in the message, if any."""
+    url = find_youtube_url(text)
+    if url:
+        return url
+    m = DRIVE_RE.search(text or "")
+    if not m:
+        return None
+    url = m.group(0)
+    return url if url.startswith("http") else "https://" + url
+
+
+def is_youtube(url: str) -> bool:
+    return bool(YOUTUBE_RE.search(url or ""))
+
+
 def probe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
@@ -37,13 +54,14 @@ def probe_duration(path: Path) -> float:
         return 0.0
 
 
-def download_youtube(url: str, out_dir: Path) -> Source:
+def download_url(url: str, out_dir: Path, name: str = "dl") -> Source:
+    """Download a YouTube video's audio or a Google Drive file (the file must be shared by link)."""
     import yt_dlp
 
     out_dir.mkdir(parents=True, exist_ok=True)
     opts = {
         "format": "bestaudio/best",
-        "outtmpl": str(out_dir / "yt.%(ext)s"),
+        "outtmpl": str(out_dir / f"{name}.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -51,8 +69,12 @@ def download_youtube(url: str, out_dir: Path) -> Source:
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         path = Path(ydl.prepare_filename(info))
-    return Source(path=path, title=info.get("title", ""), url=info.get("webpage_url", url),
+    page = info.get("webpage_url", url)
+    return Source(path=path, title=Path(info.get("title", "")).stem, url=page if is_youtube(page) else "",
                   duration=float(info.get("duration") or 0) or probe_duration(path))
+
+
+download_youtube = download_url
 
 
 def load_audio(path: Path) -> np.ndarray:

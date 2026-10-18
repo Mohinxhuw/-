@@ -47,6 +47,20 @@ if ! grep -qE '^ANTHROPIC_API_KEY=sk-ant-' .env; then
   set_env ANTHROPIC_API_KEY "$KEY"
 fi
 
+# Optional: fast transcription with Groq (an hour of lecture in about a minute).
+if ! grep -qE '^GROQ_API_KEY=' .env; then
+  echo
+  echo "Fast transcription needs a free key from https://console.groq.com/keys (starts with gsk_)."
+  echo "Press Enter to skip and transcribe on this server instead (slower)."
+  while :; do
+    read -rp "Groq API key: " IN </dev/tty
+    GROQ=$(printf '%s' "$IN" | grep -oE 'gsk_[A-Za-z0-9]{20,}' | head -1 || true)
+    { [ -n "$GROQ" ] || [ -z "$IN" ]; } && break
+    echo "   A Groq key starts with gsk_. Try again, or press Enter to skip."
+  done
+  set_env GROQ_API_KEY "$GROQ"
+fi
+
 # Optional: files up to 2 GB through a self-hosted Telegram Bot API server.
 if ! grep -qE '^TELEGRAM_API_ID=' .env; then
   echo
