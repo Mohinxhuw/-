@@ -358,7 +358,7 @@ async def main():
         last(T, "ملف كوكيز يوتيوب")
         await send(msg(T, document={"file_id": "ck", "file_unique_id": "ck", "file_name": "cookies.txt",
                                     "mime_type": "text/plain", "file_size": 100}))
-        last(T, "لا يبدو ملف cookies.txt")
+        last(T, "لا يحوي أي كوكيز")
 
         # the wallet: charging on, the free hour, a top-up with Stars, and per-use charges
         await send(cmd(T, "/billing on"))

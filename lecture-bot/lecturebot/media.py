@@ -120,3 +120,41 @@ def timestamp_url(source_url: str, seconds: int | None) -> str | None:
         return None
     sep = "&" if "?" in source_url else "?"
     return f"{source_url}{sep}t={seconds}s"
+
+
+LOGIN_COOKIES = {"LOGIN_INFO", "SID", "__Secure-1PSID", "__Secure-3PSID", "SAPISID"}
+
+
+def parse_cookies(data: bytes) -> tuple[str | None, str]:
+    """A cookies export (Netscape cookies.txt, or the JSON some browser add-ons write) as a Netscape
+    cookies.txt for yt-dlp, or (None, why it cannot be used)."""
+    text = data.decode("utf-8", "ignore").lstrip("\ufeff").replace("\r\n", "\n")
+    rows = []
+    if text.lstrip().startswith(("[", "{")):
+        import json
+        try:
+            items = json.loads(text)
+        except ValueError:
+            items = []
+        for c in items if isinstance(items, list) else items.get("cookies", []):
+            if isinstance(c, dict) and c.get("name") and c.get("domain"):
+                d = c["domain"]
+                rows.append([d, "TRUE" if d.startswith(".") else "FALSE", c.get("path", "/"),
+                             "TRUE" if c.get("secure") else "FALSE",
+                             str(int(c.get("expirationDate") or c.get("expires") or 0)), c["name"], str(c.get("value", ""))])
+    else:
+        for line in text.split("\n"):
+            if line.startswith("#HttpOnly_"):
+                line = line[len("#HttpOnly_"):]
+            parts = line.split("\t")
+            if not line.startswith("#") and len(parts) == 7:
+                rows.append(parts)
+    if not rows:
+        return None, "empty"
+    youtube = [r for r in rows if r[0].lstrip(".").endswith(("youtube.com", "google.com"))]
+    if not youtube:
+        return None, "other_site"
+    if not {r[5] for r in youtube} & LOGIN_COOKIES:
+        return None, "signed_out"
+    lines = ["# Netscape HTTP Cookie File"] + ["\t".join(r) for r in youtube]
+    return "\n".join(lines) + "\n", ""

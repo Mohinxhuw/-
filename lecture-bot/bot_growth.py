@@ -339,12 +339,17 @@ async def on_cookies_file(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data.pop("await", None)
     f = await context.bot.get_file(doc.file_id)
     data = bytes(await f.download_as_bytearray())
-    if b"youtube.com" not in data or (b"# Netscape" not in data[:200] and b"\t" not in data):
-        await update.effective_message.reply_text("⚠️ هذا لا يبدو ملف cookies.txt من يوتيوب. أرسل /cookies وحاول مجدداً.")
+    cookies, problem = media.parse_cookies(data)
+    if not cookies:
+        why = {"empty": "الملف لا يحوي أي كوكيز. غالباً الإضافة غير مسموح لها في النوافذ الخاصة: ⋮ ← الامتدادات ← "
+                        "cookies.txt ← فعّل «السماح في النوافذ الخاصة»، ثم صدّر الملف من جديد.",
+               "other_site": "الملف لموقع آخر غير يوتيوب. صدّره وأنت في صفحة youtube.com نفسها.",
+               "signed_out": "الملف من يوتيوب لكن بلا تسجيل دخول. ادخل بالحساب في النافذة نفسها ثم صدّره."}[problem]
+        await update.effective_message.reply_text(f"⚠️ {why}\nثم أرسل /cookies والملف مرة أخرى.")
         return True
     path = media.youtube_cookies()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+    path.write_text(cookies)
     path.chmod(0o600)
     try:
         await update.effective_message.delete()  # the cookies are a login: do not leave them in the chat
