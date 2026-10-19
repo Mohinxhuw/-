@@ -1,7 +1,5 @@
-"""Editable copies of a lecture's notes: Word (right-to-left) and Markdown (imports cleanly into Notion),
-and the teacher's exam paper and answer key."""
+"""Editable copies of a lecture's notes: Word (right-to-left) and Markdown (imports cleanly into Notion),"""
 import io
-from html import escape
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -10,7 +8,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from . import mindmap
-from .render import CSS, LABELS, _letter
+from .render import LABELS, _letter
 
 NAVY = RGBColor(0x14, 0x3F, 0x62)
 LETTERS = LABELS["ar"]["letters"]
@@ -205,75 +203,3 @@ def lecture_markdown(lec: dict) -> str:
     if lec.get("transcript"):
         out += ["## النص الكامل", "", lec["transcript"], ""]
     return "\n".join(out)
-
-
-# ---------- teacher: exam paper and answer key ----------
-
-PAPER_CSS = """
-.head { border: 0.8pt solid #143f62; border-radius: 6pt; padding: 8pt 12pt; margin: 6pt 0 14pt; }
-.head td { border: 0; padding: 3pt 0; font-size: 11pt; }
-.line { display: inline-block; min-width: 150pt; border-bottom: 0.6pt solid #7a8796; }
-.q { margin-bottom: 12pt; }
-"""
-
-
-def exam_paper_html(lec: dict, with_answers: bool) -> str:
-    from . import config
-
-    e = escape
-    title = lec.get("title") or "اختبار"
-    parts = [f"<h1>{'نموذج الإجابة: ' if with_answers else 'اختبار: '}{e(title)}</h1>"]
-    if not with_answers:
-        parts.append('<div class="head"><table><tr><td>الاسم: <span class="line"></span></td>'
-                     '<td>الشعبة: <span class="line"></span></td></tr><tr><td>التاريخ: <span class="line"></span></td>'
-                     '<td>الدرجة: <span class="line"></span></td></tr></table></div>')
-    mcq, tf = lec.get("mcq", []), lec.get("true_false", [])
-    if mcq:
-        parts.append(f"<h2>السؤال الأول: اختر الإجابة الصحيحة ({len(mcq)} درجة)</h2>")
-        for i, q in enumerate(mcq, 1):
-            opts = ""
-            for j, o in enumerate(q["options"]):
-                mark = " ← الإجابة الصحيحة" if with_answers and j == q["answer_index"] else ""
-                style = ' style="font-weight:700;color:#2f8f6f"' if mark else ""
-                opts += f'<li{style}><span class="opt">({_letter(j)})</span> {e(o)}{mark}</li>'
-            note = f'<div class="cover-note">{e(q.get("explanation", ""))}</div>' if with_answers else ""
-            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b><ul>{opts}</ul>{note}</div>')
-    if tf:
-        parts.append(f"<h2>السؤال الثاني: ضع صح أو خطأ ({len(tf)} درجة)</h2>")
-        for i, t in enumerate(tf, 1):
-            ans = f"<b>{'صح' if t['answer'] else 'خطأ'}</b>" if with_answers else "&nbsp; &nbsp; &nbsp;"
-            note = f'<div class="cover-note">{e(t.get("explanation", ""))}</div>' if with_answers else ""
-            parts.append(f'<div class="q">{i}. {e(t["statement"])} <span class="opt">( {ans} )</span>{note}</div>')
-    essays = lec.get("essay", [])
-    if essays:
-        parts.append(f"<h2>السؤال الثالث: أجب عما يلي ({len(essays)} أسئلة)</h2>")
-        for i, q in enumerate(essays, 1):
-            body = (f'<div class="answer"><b>نموذج الإجابة:</b> {e(q.get("model_answer", ""))}</div>' if with_answers
-                    else '<div style="height:70pt"></div>')
-            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b>{body}</div>')
-    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/") + PAPER_CSS
-    return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>{css}</style></head>' \
-           f'<body>{"".join(parts)}</body></html>'
-
-
-def exam_paper_docx(lec: dict) -> bytes:
-    d = _Doc()
-    d.h(f"اختبار: {lec.get('title') or ''}", 0)
-    d.p("الاسم: ....................    الشعبة: ..........    الدرجة: ..........")
-    if lec.get("mcq"):
-        d.h(f"السؤال الأول: اختر الإجابة الصحيحة ({len(lec['mcq'])} درجة)")
-        for i, q in enumerate(lec["mcq"], 1):
-            d.p(f"{i}. {q['question']}", bold=True)
-            for j, o in enumerate(q["options"]):
-                d.p(f"({_letter(j)}) {o}")
-    if lec.get("true_false"):
-        d.h(f"السؤال الثاني: ضع صح أو خطأ ({len(lec['true_false'])} درجة)")
-        for i, t in enumerate(lec["true_false"], 1):
-            d.p(f"{i}. {t['statement']}  (      )")
-    if lec.get("essay"):
-        d.h("السؤال الثالث: أجب عما يلي")
-        for i, q in enumerate(lec["essay"], 1):
-            d.p(f"{i}. {q['question']}", bold=True)
-            for _ in range(4):
-                d.p("....................................................................................")
-    return d.bytes()

@@ -62,10 +62,12 @@ def finish(result: dict, segments: list, out_dir: Path, source: Source, duration
     (on_stage or (lambda *_: None))("render", 0.0)
     segments = analyze.apply_fixes(segments, result.get("transcript_fixes", []))
     paragraphs = transcribe.to_paragraphs(segments)
-    html = render.build_html(result, paragraphs, source.title, source.url, duration)
-    pdf = render.write_pdf(html, out_dir / f"{safe_name(result.get('title') or source.title)}{name_suffix}.pdf")
+    title = safe_name(result.get("title") or source.title)
+    names = dict(render.FILES)
+    files = {kind: render.write_pdf(html, out_dir / f"{names[kind]} - {title}{name_suffix}.pdf")
+             for kind, html in render.build_files(result, paragraphs, source.title, source.url, duration).items()}
     text = render.transcript_txt(paragraphs) if paragraphs else ""
-    return LectureResult(result, paragraphs, pdf, text, source, extra={"duration": duration})
+    return LectureResult(result, paragraphs, files["summary"], text, source, extra={"duration": duration, "files": files})
 
 
 def run(source: Source | list[Source], out_dir: Path, major: str | None = None,

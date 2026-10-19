@@ -244,7 +244,7 @@ def translate(lec: dict) -> dict:
     from .analyze import SCHEMA
 
     keys = ("title", "subject", "overview", "sections", "glossary", "mcq", "true_false", "essay", "flashcards",
-            "divisions", "comparisons")
+            "divisions", "processes", "comparisons")
     schema = {"type": "object", "properties": {k: SCHEMA["properties"][k] for k in keys},
               "required": list(keys), "additionalProperties": False}
     notes = {k: lec.get(k) or ("" if k in ("title", "subject", "overview") else []) for k in keys}

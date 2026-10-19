@@ -107,7 +107,7 @@ async def _unfiled(update: Update, context) -> None:
 
 
 async def _lecture(update: Update, context, lid: str) -> None:
-    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
+    ud, chat = context.user_data, update.effective_chat.id
     meta = ud.get("lectures", {}).get(lid)
     if not meta:
         await context.bot.send_message(chat, "لم أعد أحتفظ بهذه المحاضرة.")
@@ -116,7 +116,7 @@ async def _lecture(update: Update, context, lid: str) -> None:
     course = library.courses(ud).get(meta.get("course"), {}).get("name", "بلا مادة")
     dur = f" · {botkit.minutes(meta['duration'])}" if meta.get("duration") else ""
     caption = f"📄 {meta.get('title', '')}\n📁 {course} · {when}{dur}"
-    if not await botkit.send_lecture_pdf(context, chat, uid, ud, lid, caption):
+    if not await botkit.send_lecture(context, chat, ud, lid, caption):
         await context.bot.send_message(chat, caption, reply_markup=botkit.lecture_keyboard(lid, meta))
 
 
@@ -309,15 +309,6 @@ async def _send_lines(context, chat: int, head: str, lines: list[str]) -> None:
     await context.bot.send_message(chat, chunk, parse_mode=ParseMode.HTML)
 
 
-async def on_terms(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    lines = _glossary_lines([lec])
-    if not lines:
-        await context.bot.send_message(update.effective_chat.id, "لا توجد مصطلحات في هذه المحاضرة.")
-        return
-    await _send_lines(context, update.effective_chat.id, f"📖 <b>مصطلحات «{escape(lec['title'])}»</b> ({len(lines)})\n",
-                      lines)
-
-
 async def on_course_terms(update: Update, context, cid: str) -> None:
     ud, uid = context.user_data, update.effective_user.id
     course = library.courses(ud).get(cid)
@@ -421,6 +412,6 @@ def register(app) -> None:
 
 botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "plan": on_plan,
                        "glos": on_course_terms})
-botkit.LECTURE_BUTTONS.update({"mv": on_move, "terms": on_terms})
+botkit.LECTURE_BUTTONS.update({"mv": on_move})
 botkit.TEXT_INPUTS.update({"search": input_search, "exam_date": input_exam_date, "rename_course": input_rename,
                            "new_course": input_new_course})

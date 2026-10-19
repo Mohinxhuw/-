@@ -47,6 +47,8 @@ PROPS = {
     "divisions": {"type": "array", "items": _obj({
         "title": _S, "center": _S, "time": _T,
         "branches": {"type": "array", "items": _obj({"label": _S, "children": _LIST_S})}})},
+    "processes": {"type": "array", "items": _obj({
+        "title": _S, "steps": _LIST_S, "cyclic": {"type": "boolean"}, "time": _T})},
     "comparisons": {"type": "array", "items": _obj({
         "title": _S, "headers": _LIST_S, "rows": {"type": "array", "items": _LIST_S}, "time": _T})},
     "transcript_fixes": {"type": "array", "items": _obj({"wrong": _S, "right": _S})},
@@ -60,7 +62,8 @@ PROPS = {
     "flashcards": {"type": "array", "items": _obj({"front": _S, "back": _S})},
 }
 
-NOTES_KEYS = ("title", "subject", "overview", "sections", "glossary", "divisions", "comparisons", "transcript_fixes")
+NOTES_KEYS = ("title", "subject", "overview", "sections", "glossary", "divisions", "processes", "comparisons",
+              "transcript_fixes")
 QUESTION_KEYS = ("mcq", "true_false", "essay", "flashcards")
 NOTES_SCHEMA = _obj({k: PROPS[k] for k in NOTES_KEYS})
 QUESTIONS_SCHEMA = _obj({k: PROPS[k] for k in QUESTION_KEYS})
@@ -124,6 +127,11 @@ lecturer named, in their order, each label 1 to 6 words, with children: the sub-
 named for it, or one short description from the lecture; an empty list if neither) and time. Never \
 turn the outline of the lecture into a division, and never create parts the lecturer did not state. \
 Use an empty list when the lecture has no explicit classification.
+- processes: only ordered steps or stages the lecturer explicitly described in sequence (a mechanism, a \
+procedure, a pathway, a cycle, the stages of a disease or of a method): title, steps (exactly the steps \
+the lecturer named, in their order, each 2 to 15 words), cyclic (true only when the lecturer said the \
+last step leads back to the first) and time. Never invent or reorder steps. Use an empty list when the \
+lecture describes no sequence.
 - comparisons: a table for each comparison the lecturer made between two or more things. headers: \
 the first is the aspect being compared, the others are the things compared (2 to 4). Each row starts \
 with the aspect, followed by one short cell per compared thing, 3 to 8 rows. Only aspects the lecturer \

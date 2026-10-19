@@ -20,10 +20,10 @@ import bot_quiz
 import bot_share
 import bot_wallet
 import botkit
-from botkit import count as _count, hour_name as _hour_name, keyboard as _keyboard, minutes as _minutes
+from botkit import count as _count, hour_name as _hour_name, minutes as _minutes
 from botkit import send_long as _send_long, work_root as _work_root
-from lecturebot import cache, config, library, materials, mindmap, pipeline, store, study
-from lecturebot.analyze import MAJOR_NAMES, AnalysisError
+from lecturebot import cache, config, library, materials, pipeline, store, study
+from lecturebot.analyze import AnalysisError
 from lecturebot import media
 from lecturebot.media import Source, download_url, find_media_url
 
@@ -46,7 +46,7 @@ WELCOME = (
     "أهلاً بك في <b>فَهيم</b> 👋\n"
     "حوّل تسجيل محاضرتك إلى مذكرة مذاكرة كاملة.\n\n"
     "📝 <b>ألخّص لك المحاضرة</b>\n"
-    "ملخص مرتب بالعناوين، والمصطلحات ومعانيها، في ملف PDF.\n\n"
+    "أربعة ملفات: الملخص مع النص الكامل، والأسئلة، والمصطلحات، والرسوم التوضيحية.\n\n"
     "🧪 <b>أختبرك فيها</b>\n"
     "أسئلة اختيار من متعدد، وصح أو خطأ، ومقالية أصححها لك، وبطاقات مراجعة يومية.\n\n"
     "📚 <b>أنظّم مذاكرتك</b>\n"
@@ -71,9 +71,7 @@ COMMANDS = [
     ("wallet", "محفظتي والأسعار"),
     ("invite", "ادعُ أصدقاءك"),
     ("stats", "إحصاءاتي"),
-    ("major", "تخصصي"),
     ("reminder", "وقت التذكير اليومي"),
-    ("teacher", "نسخة المعلم"),
     ("privacy", "الخصوصية"),
     ("delete", "حذف بياناتي"),
     ("paysupport", "الدعم ومشكلات الدفع"),
@@ -109,7 +107,7 @@ def _quick_summary(analysis: dict, streamed: bool) -> str:
         if heads:
             lines.append("\n<b>محاور المحاضرة:</b>")
             lines += [f"• {escape(h)} <code>{escape(t)}</code>" for h, t in heads]
-    lines.append("\nالملف الكامل في الأسفل 👇")
+    lines.append("\nالملفات في الأسفل 👇")
     text = "\n".join(lines)
     return text if len(text) < 4000 else text[:3990] + "…"
 
@@ -122,7 +120,7 @@ class Progress:
     """Edits one status message as the job moves on, without flooding Telegram."""
 
     STAGES = {"transcribe": "🎧 أحوّل الكلام إلى نص", "analyze": "🧠 أكتب الملخص والأسئلة",
-              "render": "📄 أجهّز ملف PDF"}
+              "render": "📄 أجهّز الملفات"}
 
     def __init__(self, msg: Message, loop: asyncio.AbstractEventLoop, eta_seconds: int):
         self.msg, self.loop, self.deadline = msg, loop, time.time() + eta_seconds
@@ -176,7 +174,7 @@ class SectionSender:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     new = not context.user_data.get("seen")
     context.user_data["seen"] = True
-    if context.args:  # t.me/<bot>?start=<prefix>_<value>: shared lecture, group invite, referral, teacher quiz
+    if context.args:  # t.me/<bot>?start=<prefix>_<value>: shared lecture, group invite, referral
         prefix, _, value = context.args[0].partition("_")
         handler = botkit.START_LINKS.get(prefix)
         if handler and await handler(update, context, value, new):
@@ -184,13 +182,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if new:
         bot_growth.welcome_credits(context.user_data)
     await update.effective_message.reply_text(WELCOME, parse_mode=ParseMode.HTML)
-    if "major" not in context.user_data:
-        await update.effective_message.reply_text("🎓 ما تخصصك؟ يساعدني على كتابة مصطلحاته بدقة.",
-                                                  reply_markup=_keyboard(MAJOR_NAMES, "major", "أخرى / عام"))
-
-
-async def major_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text("اختر تخصصك:", reply_markup=_keyboard(MAJOR_NAMES, "major", "أخرى / عام"))
 
 
 async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -358,16 +349,16 @@ def _full_from(result) -> dict:
     """What is stored for a lecture: its notes, questions and transcript."""
     a = result.analysis
     full = {key: a.get(key, []) for key in ("mcq", "true_false", "essay", "flashcards", "sections", "glossary",
-                                            "divisions", "comparisons")}
+                                            "divisions", "processes", "comparisons")}
     full.update(title=a.get("title", ""), subject=a.get("subject", ""), overview=a.get("overview", ""),
                 transcript=result.transcript_text, ndiv=len(a.get("divisions", [])), lang=result.extra.get("lang", "ar"),
                 duration=result.extra.get("duration", 0), source_url=result.source.url or "")
     return full
 
 
-async def _save_and_send(context, chat_id: int, user_id: int, full: dict, pdf_path: Path | None = None,
+async def _save_and_send(context, chat_id: int, user_id: int, full: dict, paths: dict | None = None,
                          note: str = "") -> str:
-    """Put a finished lecture in the student's library, add its cards, send its PDF; returns its id."""
+    """Put a finished lecture in the student's library, add its cards, send its files; returns its id."""
     ud = context.user_data
     lid = uuid.uuid4().hex[:8]
     full = dict(full, time=time.time())
@@ -386,15 +377,10 @@ async def _save_and_send(context, chat_id: int, user_id: int, full: dict, pdf_pa
         "🧪 " + _count(n_questions, "سؤال واحد", "سؤالان", "أسئلة", "سؤالاً") + " للاختبار"
         + (" · 🃏 " + _count(added, "بطاقة واحدة", "بطاقتان", "بطاقات", "بطاقة") + " للمراجعة اليومية" if added else "")]
     markup = botkit.lecture_keyboard(lid, lectures[lid])
-    if pdf_path:
-        with open(pdf_path, "rb") as fh:
-            sent = await context.bot.send_document(chat_id, fh, filename=pdf_path.name,
-                                                   caption="\n".join(caption)[:1000], reply_markup=markup)
-    else:
-        sent = await context.bot.send_document(chat_id, full["pdf_file_id"], caption="\n".join(caption)[:1000],
-                                               reply_markup=markup)
-    if sent.document:
-        lectures[lid]["pdf_file_id"] = full["pdf_file_id"] = sent.document.file_id
+    ids = await botkit.send_files(context, chat_id, paths or botkit.lecture_files(full), "\n".join(caption), markup)
+    if ids:
+        lectures[lid]["files"] = full["files"] = ids
+        lectures[lid]["pdf_file_id"] = full["pdf_file_id"] = ids.get("summary")
     await bot_share.auto_share(context, user_id, lid)
     return lid
 
@@ -461,7 +447,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
         return
     images_meta = _fresh(ud.pop("pending_images", []))
     docs_meta = _fresh(ud.pop("pending_docs", []))
-    major = ud.get("major")
+    major = None
 
     extras = ["🧩 " + _count(len(parts), "", "جزآن", "أجزاء", "جزءاً") if len(parts) > 1 else "",
               "📎 " + _count(len(docs_meta), "ملف واحد", "ملفان", "ملفات", "ملفاً") if docs_meta else "",
@@ -523,9 +509,10 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
         if not sender.count:  # the sections were not streamed: send the outline first
             await context.bot.send_message(chat_id, _quick_summary(result.analysis, False), parse_mode=ParseMode.HTML)
         full = _full_from(result)
-        lid = await _save_and_send(context, chat_id, user_id, full, result.pdf_path)
+        lid = await _save_and_send(context, chat_id, user_id, full, result.extra["files"])
         bot_wallet.charge_upload(context, ud, duration)
-        cache.put(key, dict(full, pdf_file_id=ud["lectures"][lid].get("pdf_file_id")))
+        meta = ud["lectures"][lid]
+        cache.put(key, dict(full, pdf_file_id=meta.get("pdf_file_id"), files=meta.get("files")))
     except pipeline.LectureTooLong:
         await status.edit_text(f"⚠️ المحاضرة أطول من {config.MAX_LECTURE_MINUTES} دقيقة. قسّمها وأرسلها على دفعات.")
     except AnalysisError as e:
@@ -563,14 +550,14 @@ async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
         sender = SectionSender(context.bot, chat_id, loop)
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         lang = "en" if ud.get("lecture_lang") == "en" else "ar"
-        result = await asyncio.to_thread(pipeline.run_files, work, title, ud.get("major"), images, mats, None, sender,
+        result = await asyncio.to_thread(pipeline.run_files, work, title, None, images, mats, None, sender,
                                          lang=lang)
         result.extra["lang"] = lang
         await asyncio.sleep(1)
         async with sender.lock:
             pass
         await status.delete()
-        await _save_and_send(context, chat_id, user_id, _full_from(result), result.pdf_path)
+        await _save_and_send(context, chat_id, user_id, _full_from(result), result.extra["files"])
         bot_wallet.charge(context, ud, bot_wallet.FILES, "ملخص من الملفات")
     except AnalysisError as e:
         log.warning("files analysis failed: %s", e)
@@ -590,14 +577,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     action, _, arg = (q.data or "").partition(":")
     chat_id = q.message.chat_id
 
-    if action == "major":
-        if arg == "none":
-            context.user_data.pop("major", None)
-            await q.edit_message_text("تم. سأتعامل مع محاضراتك كتخصص عام.")
-        else:
-            context.user_data["major"] = arg
-            await q.edit_message_text(f"🎓 تم اختيار: {MAJOR_NAMES.get(arg, arg)}. أرسل تسجيل المحاضرة الآن.")
-        return
     if action == "go":
         await _run_job(context, chat_id, update.effective_user.id)
         return
@@ -663,16 +642,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                for c in chunk)
             await context.bot.send_message(chat_id, ("🃏 اضغط على الجواب المخفي لكشفه\n\n" if start_i == 0 else "")
                                            + text, parse_mode=ParseMode.HTML)
-    elif action == "div":
-        divisions = lec.get("divisions", [])
-        if not divisions:
-            await context.bot.send_message(chat_id, "لا توجد تقسيمات في هذه المحاضرة.")
-        for d in divisions:
-            png = await asyncio.to_thread(mindmap.render_png, d)
-            if png:
-                caption = f"🌳 {d.get('title', '')}" + (f" ⏱ {d['time']}" if d.get("time") else "")
-                await context.bot.send_document(chat_id, png, filename=pipeline.safe_name(d.get("title", "")) + ".png",
-                                                caption=caption)
     elif action == "simp":
         sections = lec.get("sections", [])
         if extra:
@@ -695,10 +664,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                            reply_markup=InlineKeyboardMarkup(rows))
         else:
             await context.bot.send_message(chat_id, "أعد إرسال المحاضرة لتستخدم هذه الميزة.")
-    elif action == "txt":
-        name = pipeline.safe_name(lec["title"]) + ".txt"
-        await context.bot.send_document(chat_id, lec["transcript"].encode("utf-8"), filename=name,
-                                        caption="📄 النص الكامل للمحاضرة، مع وقت كل فقرة.")
     elif action == "more":
         await context.bot.send_message(chat_id, f"⋯ <b>{escape(lec['title'])}</b>", parse_mode=ParseMode.HTML,
                                        reply_markup=botkit.more_keyboard(lid, context.user_data))
@@ -853,7 +818,6 @@ def _leave_cloud_api() -> None:
 def setup(app: Application) -> None:
     """Register every handler (also used by the tests)."""
     app.add_handler(CommandHandler(["start", "help"], start))
-    app.add_handler(CommandHandler("major", major_cmd))
     app.add_handler(CommandHandler("privacy", privacy_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("review", review_cmd))

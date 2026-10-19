@@ -43,6 +43,14 @@ img.mindmap { max-width: 100%; max-height: 95mm; border: 0.6pt solid #cfd8e1; bo
 .answer { background: #f3f6f9; border-radius: 4pt; padding: 6pt 10pt; margin-top: 4pt; font-size: 10.5pt; }
 .compare td:first-child { background: #eef3f8; width: 22%; }
 .cover-note { font-size: 9pt; color: #7a8796; margin-top: 4pt; }
+.kind { display: inline-block; background: #e3b448; color: #143f62; font-weight: 700; font-size: 10pt;
+        border-radius: 3pt; padding: 1pt 8pt; margin-bottom: 4pt; }
+.process { page-break-inside: avoid; margin-bottom: 12pt; }
+.step { border: 1pt solid #143f62; background: #f3f6f9; border-radius: 6pt; padding: 5pt 10pt; margin: 0 14%; }
+.step .num { display: inline-block; background: #143f62; color: #fff; font-weight: 700; border-radius: 50%;
+             min-width: 14pt; text-align: center; margin-inline-end: 4pt; }
+.arrow { text-align: center; color: #e3b448; font-size: 12pt; line-height: 1.2; }
+.cycle { text-align: center; font-weight: 700; color: #143f62; }
 """
 
 # Left-to-right version of the stylesheet for the English PDF.
@@ -63,7 +71,8 @@ LABELS = {
            "term": "المصطلح", "arabic": "بالعربية", "meaning": "المعنى", "mcq": "أسئلة الاختيار من متعدد",
            "answers": "الإجابات", "question": "السؤال", "answer_expl": "الإجابة والشرح", "tf": "أسئلة صح أو خطأ",
            "true": "صح", "false": "خطأ", "cards": "بطاقات المراجعة", "card_q": "السؤال", "card_a": "الجواب",
-           "transcript": "النص الكامل", "letters": "أبجدهوزحطي"},
+           "transcript": "النص الكامل", "letters": "أبجدهوزحطي",
+           "processes": "المراحل والخطوات", "back_to": "ثم تعود الدورة إلى:"},
     "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
            "times_note": "The times next to each point show where it is explained in the recording.",
            "summary": "Summary", "mindmap": "Classifications", "comparisons": "Comparison tables",
@@ -71,7 +80,8 @@ LABELS = {
            "term": "Term", "arabic": "Arabic", "meaning": "Meaning", "mcq": "Multiple-choice questions",
            "answers": "Answers", "question": "Question", "answer_expl": "Answer and explanation",
            "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
-           "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ"},
+           "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ",
+           "processes": "Stages and steps", "back_to": "Then the cycle returns to:"},
 }
 
 
@@ -96,27 +106,35 @@ def _t(time_text: str, source_url: str) -> str:
     return f'<span class="t">{label}</span>'
 
 
-def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", source_url: str = "",
-               duration: float = 0.0, lang: str = "ar") -> str:
-    e, L = escape, LABELS[lang]
-    letter = lambda i: _letter(i, L["letters"])  # noqa: E731
-    parts = [f"<h1>{e(result.get('title') or source_title or L['summary_title'])}</h1>"]
+def _header(result: dict, L: dict, source_title: str, duration: float, kind_title: str = "") -> list[str]:
+    e = escape
+    title = result.get("title") or source_title or L["summary_title"]
+    parts = [f'<div class="kind">{e(kind_title)}</div>' if kind_title else "", f"<h1>{e(title)}</h1>"]
     meta = [m for m in (result.get("subject"), f"{L['duration']} {fmt_time(duration)}" if duration else "",
                         dt.date.today().strftime("%Y-%m-%d")) if m]
     parts.append(f'<div class="meta">{" · ".join(e(m) for m in meta)}</div>')
     if source_title and source_title != result.get("title"):
         parts.append(f'<div class="meta">{L["source"]}: {e(source_title)}</div>')
+    return parts
+
+
+def _summary(result: dict, L: dict, source_url: str) -> list[str]:
+    e, parts = escape, []
     if result.get("overview"):
         parts.append(f'<div class="overview">{e(result["overview"])}</div>')
     parts.append(f'<div class="cover-note">{L["times_note"]}</div>')
-
     parts.append(f"<h2>{L['summary']}</h2>")
     for sec in result.get("sections", []):
         parts.append(f"<h3>{e(sec.get('heading', ''))} {_t(sec.get('time', ''), source_url)}</h3><ul>")
         for p in sec.get("points", []):
             parts.append(f"<li>{e(p.get('text', ''))} {_t(p.get('time', ''), source_url)}</li>")
         parts.append("</ul>")
+    return parts
 
+
+def _visuals(result: dict, L: dict, source_url: str, lang: str) -> list[str]:
+    """Classification trees, step-by-step processes and comparison tables: only what the lecturer stated."""
+    e, parts = escape, []
     divisions = result.get("divisions") or []
     if divisions:
         parts.append(f'<h2>{L["mindmap"]}</h2>')
@@ -126,7 +144,17 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
                 b64 = base64.standard_b64encode(png).decode()
                 parts.append(f'<div class="division"><h3>{e(d.get("title", ""))} {_t(d.get("time", ""), source_url)}</h3>'
                              f'<img class="mindmap" src="data:image/png;base64,{b64}"></div>')
-
+    processes = [p for p in result.get("processes") or [] if len(p.get("steps", [])) >= 2]
+    if processes:
+        parts.append(f'<h2>{L["processes"]}</h2>')
+        for p in processes:
+            steps = p["steps"]
+            flow = '<div class="arrow">⬇</div>'.join(
+                f'<div class="step"><span class="num">{i}</span> {e(st)}</div>' for i, st in enumerate(steps, 1))
+            if p.get("cyclic"):
+                flow += f'<div class="arrow">⬇</div><div class="cycle">↻ {L["back_to"]} {e(steps[0])}</div>'
+            parts.append(f'<div class="process"><h3>{e(p.get("title", ""))} {_t(p.get("time", ""), source_url)}</h3>'
+                         f'{flow}</div>')
     comps = result.get("comparisons", [])
     if comps:
         parts.append(f"<h2>{L['comparisons']}</h2>")
@@ -136,7 +164,11 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
                                             for j, cell in enumerate(r)) + "</tr>" for r in c["rows"])
             parts.append(f'<h3>{e(c["title"])} {_t(c.get("time", ""), source_url)}</h3>'
                          f'<table class="compare"><thead><tr>{head}</tr></thead>{body}</table>')
+    return parts
 
+
+def _glossary(result: dict, L: dict) -> list[str]:
+    e, parts = escape, []
     if result.get("glossary"):
         parts.append(f"<h2>{L['glossary']}</h2><table><thead><tr><th>{L['term']}</th><th>{L['arabic']}</th>"
                      f"<th>{L['meaning']}</th></tr></thead>")
@@ -144,7 +176,12 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
             parts.append(f'<tr><td class="en">{e(g.get("term", ""))}</td><td>{e(g.get("arabic", ""))}</td>'
                          f'<td>{e(g.get("explanation", ""))}</td></tr>')
         parts.append("</table>")
+    return parts
 
+
+def _questions(result: dict, L: dict, source_url: str) -> list[str]:
+    e, parts = escape, []
+    letter = lambda i: _letter(i, L["letters"])  # noqa: E731
     mcq = result.get("mcq", [])
     if mcq:
         parts.append(f"<h2>{L['mcq']}</h2>")
@@ -180,7 +217,8 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
         parts.append(f"<h2>{L['essay']}</h2>")
         for i, q in enumerate(essays, 1):
             parts.append(f'<div class="q"{_dir(q["question"])}><b>{i}. {e(q["question"])}</b> '
-                         f'{_t(q.get("time", ""), source_url)}<div class="answer"><b>{L["model_answer"]}:</b> {e(q.get("model_answer", ""))}</div></div>')
+                         f'{_t(q.get("time", ""), source_url)}<div class="answer"><b>{L["model_answer"]}:</b> '
+                         f'{e(q.get("model_answer", ""))}</div></div>')
 
     cards = result.get("flashcards", [])
     if cards:
@@ -189,16 +227,47 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
         for c in cards:
             parts.append(f"<tr><td>{e(c.get('front', ''))}</td><td>{e(c.get('back', ''))}</td></tr>")
         parts.append("</table>")
+    return parts
 
-    if paragraphs:
-        parts.append(f"<h2>{L['transcript']}</h2>")
-        for p in paragraphs:
-            parts.append(f'<p class="para">{_t(fmt_time(p.start), source_url)} {e(p.text)}</p>')
 
+def _transcript(paragraphs: list[Segment], L: dict, source_url: str) -> list[str]:
+    if not paragraphs:
+        return []
+    return [f"<h2>{L['transcript']}</h2>"] + [f'<p class="para">{_t(fmt_time(p.start), source_url)} {escape(p.text)}</p>'
+                                             for p in paragraphs]
+
+
+def _page(parts: list[str], lang: str = "ar") -> str:
     css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/") + (CSS_EN if lang == "en" else "")
     direction = "rtl" if lang == "ar" else "ltr"
     return f'<!doctype html><html lang="{lang}" dir="{direction}"><head><meta charset="utf-8"><style>{css}</style>' \
            f'</head><body>{"".join(parts)}</body></html>'
+
+
+def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", source_url: str = "",
+               duration: float = 0.0, lang: str = "ar") -> str:
+    """Everything in one document (the English version)."""
+    L = LABELS[lang]
+    return _page(_header(result, L, source_title, duration) + _summary(result, L, source_url)
+                 + _visuals(result, L, source_url, lang) + _glossary(result, L) + _questions(result, L, source_url)
+                 + _transcript(paragraphs, L, source_url), lang)
+
+
+# The files a student gets for each lecture, in the order they are sent.
+FILES = (("summary", "الملخص"), ("questions", "الأسئلة"), ("glossary", "المصطلحات"), ("visuals", "الرسوم التوضيحية"))
+
+
+def build_files(result: dict, paragraphs: list[Segment], source_title: str = "", source_url: str = "",
+                duration: float = 0.0) -> dict[str, str]:
+    """kind -> HTML of each file the lecture has content for (see FILES)."""
+    L = LABELS["ar"]
+    bodies = {"summary": _summary(result, L, source_url) + _transcript(paragraphs, L, source_url),
+              "questions": _questions(result, L, source_url),
+              "glossary": _glossary(result, L),
+              "visuals": _visuals(result, L, source_url, "ar")}
+    names = dict(FILES)
+    return {kind: _page(_header(result, L, source_title, duration, names[kind]) + body)
+            for kind, body in bodies.items() if body}
 
 
 def write_pdf(html: str, out_path: Path) -> Path:

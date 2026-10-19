@@ -11,7 +11,7 @@ import logging
 import time
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Poll, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument, Poll, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -26,49 +26,30 @@ START_LINKS: dict = {}
 POLL_HOOKS: dict = {}  # poll kind -> fn(context, info, right), after an answer is recorded
 
 
-def keyboard(options: dict[str, str], prefix: str, other: str | None = None, per_row: int = 2) -> InlineKeyboardMarkup:
-    rows, row = [], []
-    for key, name in options.items():
-        row.append(InlineKeyboardButton(name, callback_data=f"{prefix}:{key}"))
-        if len(row) == per_row:
-            rows.append(row)
-            row = []
-    if other:
-        row.append(InlineKeyboardButton(other, callback_data=f"{prefix}:none"))
-    if row:
-        rows.append(row)
-    return InlineKeyboardMarkup(rows)
-
-
 def button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data[:64])
 
 
 def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup:
-    """The buttons under a lecture's PDF. meta: the lecture's details (to know if it has divisions)."""
-    second = [button("💡 اشرح لي أبسط", f"simp:{lid}")]
-    if (meta or {}).get("ndiv"):
-        second.append(button("🌳 التقسيمات", f"div:{lid}"))
+    """The buttons under a lecture's files. meta: the lecture's details (an English lecture needs no
+    English version)."""
+    third = [button("⋯ المزيد", f"more:{lid}")]
+    if (meta or {}).get("lang") != "en":
+        third.insert(0, button("🌐 English", f"en:{lid}"))
     return InlineKeyboardMarkup([
         [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
-        second,
-        [button("📖 المصطلحات", f"terms:{lid}") if (meta or {}).get("lang") == "en"
-         else button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
+        [button("💡 اشرح لي أبسط", f"simp:{lid}")],
+        third,
     ])
 
 
 def more_keyboard(lid: str, ud: dict) -> InlineKeyboardMarkup:
     rows = [
         [button("📤 Word", f"docx:{lid}"), button("📝 Notion", f"md:{lid}")],
-        [button("📄 النص الكامل", f"txt:{lid}"), button("📁 نقل لمادة أخرى", f"mv:{lid}")],
-        [button("🔗 شاركها مع زميل", f"share:{lid}")],
-        [button("📖 المصطلحات", f"terms:{lid}")],
+        [button("📁 نقل لمادة أخرى", f"mv:{lid}"), button("🔗 شاركها مع زميل", f"share:{lid}")],
     ]
     if ud.get("groups"):
-        rows[-1].append(button("👥 أرسلها لمجموعة", f"tog:{lid}"))
-    if ud.get("teacher"):
-        rows.append([button("📝 ورقة اختبار", f"tpaper:{lid}"), button("🔑 نموذج الإجابة", f"tkey:{lid}")])
-        rows.append([button("🔗 اختبار لطلابي", f"tquiz:{lid}")])
+        rows.append([button("👥 أرسلها لمجموعة", f"tog:{lid}")])
     rows.append([button("🗑 حذف", f"del:{lid}")])
     return InlineKeyboardMarkup(rows)
 
@@ -140,17 +121,54 @@ def evidence_button(lid: str, kind: str, i: int):
     return button("📍 الدليل", f"ev:{lid}:{kind}:{i}")
 
 
-async def send_lecture_pdf(context, chat_id: int, user_id: int, ud: dict, lid: str, caption: str) -> bool:
-    """Send a stored lecture's PDF again (Telegram keeps it; we keep its file id)."""
+FILE_KINDS = ("summary", "questions", "glossary", "visuals")  # the order of a lecture's files
+
+
+def lecture_files(meta: dict) -> dict:
+    """kind -> Telegram file id of a stored lecture's files (older lectures have a single PDF)."""
+    return dict(meta.get("files") or ({"summary": meta["pdf_file_id"]} if meta.get("pdf_file_id") else {}))
+
+
+async def send_files(context, chat_id: int, files: dict, caption: str, markup=None) -> dict:
+    """Send a lecture's files together (paths of new files, or file ids), then the caption with its buttons.
+    Returns kind -> file id of what was sent."""
+    items = [(k, files[k]) for k in FILE_KINDS if files.get(k)]
+    handles, media = [], []
+    try:
+        for _, f in items:
+            if isinstance(f, Path):
+                fh = open(f, "rb")
+                handles.append(fh)
+                media.append(InputMediaDocument(fh, filename=f.name))
+            else:
+                media.append(InputMediaDocument(f))
+        if len(media) == 1:
+            f = items[0][1]
+            sent = [await context.bot.send_document(chat_id, handles[0] if isinstance(f, Path) else f,
+                                                    filename=f.name if isinstance(f, Path) else None,
+                                                    read_timeout=120, write_timeout=120)]
+        elif media:
+            sent = await context.bot.send_media_group(chat_id, media, read_timeout=120, write_timeout=120)
+        else:
+            sent = []
+    finally:
+        for fh in handles:
+            fh.close()
+    await context.bot.send_message(chat_id, caption, reply_markup=markup)
+    return {k: m.document.file_id for (k, _), m in zip(items, sent) if m.document}
+
+
+async def send_lecture(context, chat_id: int, ud: dict, lid: str, caption: str) -> bool:
+    """Send a stored lecture's files again (Telegram keeps them; we keep their file ids)."""
     meta = ud.get("lectures", {}).get(lid, {})
-    if not meta.get("pdf_file_id"):
+    files = lecture_files(meta)
+    if not files:
         return False
     try:
-        await context.bot.send_document(chat_id, meta["pdf_file_id"], caption=caption,
-                                        reply_markup=lecture_keyboard(lid, meta))
+        await send_files(context, chat_id, files, caption, lecture_keyboard(lid, meta))
         return True
     except TelegramError as e:
-        log.warning("resend pdf failed: %s", e)
+        log.warning("resend files failed: %s", e)
         return False
 
 

@@ -108,15 +108,7 @@ def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str
 async def _deliver(context, to_uid: int, new_lid: str, note: str) -> None:
     ud = context.application.user_data[to_uid]
     meta = ud["lectures"][new_lid]
-    sent = False
-    if meta.get("pdf_file_id"):
-        try:
-            await context.bot.send_document(to_uid, meta["pdf_file_id"], caption=note,
-                                            reply_markup=botkit.lecture_keyboard(new_lid, meta))
-            sent = True
-        except TelegramError as e:
-            log.info("deliver pdf to %s failed: %s", to_uid, e)
-    if not sent:
+    if not await botkit.send_lecture(context, to_uid, ud, new_lid, note):
         await context.bot.send_message(to_uid, note, reply_markup=botkit.lecture_keyboard(new_lid, meta))
 
 

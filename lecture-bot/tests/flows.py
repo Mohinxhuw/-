@@ -62,6 +62,13 @@ class FakeTelegram(BaseRequest):
             r = {"id": 1, "is_bot": True, "first_name": "Faheem", "username": "FaheemSyBot"}
         elif name == "sendDocument":
             r = dict(msg, document={"file_id": f"doc{_mid[0]}", "file_unique_id": "u"})
+        elif name == "sendMediaGroup":
+            media = params["media"] if isinstance(params["media"], list) else json.loads(params["media"])
+            r = []
+            for k in range(len(media)):
+                _mid[0] += 1
+                r.append(dict(msg, message_id=_mid[0], document={"file_id": f"doc{_mid[0]}", "file_unique_id": "u"}))
+            SENT[-1][2]["files"] = len(media)
         elif name == "sendAudio":
             r = dict(msg, audio={"file_id": f"aud{_mid[0]}", "file_unique_id": "u", "duration": 60})
         elif name == "sendPoll":
@@ -104,10 +111,13 @@ LANGS = []
 def fake_run(sources, work, *a, lang="ar", **kw):
     RUNS.append(len(sources))
     LANGS.append(lang)
-    pdf = work / "x.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    r = LectureResult(dict(ANALYSIS), [], pdf, "[00:00] نتحدث اليوم عن الميتوكوندريا\n\n[00:30] التحلل السكري", sources[0])
-    r.extra["duration"] = 3600
+    files = {}
+    for kind in ("summary", "questions", "glossary", "visuals"):
+        files[kind] = work / f"{kind}.pdf"
+        files[kind].write_bytes(b"%PDF-1.4")
+    r = LectureResult(dict(ANALYSIS), [], files["summary"], "[00:00] نتحدث اليوم عن الميتوكوندريا\n\n[00:30] التحلل السكري",
+                      sources[0])
+    r.extra.update(duration=3600, files=files)
     return r
 
 
@@ -120,7 +130,7 @@ def fake_run_files(work, title, *a, **kw):
     pdf.write_bytes(b"%PDF-1.4")
     from lecturebot.media import Source
     return LectureResult(dict(ANALYSIS, title="فصل الخلية"), [], pdf, "الخلية وحدة بناء الكائن الحي",
-                         Source(path=Path("f"), title=title))
+                         Source(path=Path("f"), title=title), extra={"files": {"summary": pdf}})
 
 
 pipeline.run_files = fake_run_files
@@ -135,7 +145,7 @@ study.translate = lambda lec: dict(ANALYSIS, title="Cellular respiration")
 study.exam_summary = lambda lecs: {"title": "ملخص", "overview": "", "topics": [], "must_memorize": [], "pitfalls": [],
                                    "self_test": []}
 
-A, B, T, C = 7, 8, 9, 10  # three students and a teacher
+A, B, T, C = 7, 8, 9, 10  # students (T becomes the owner)
 
 
 def user(uid):
@@ -201,6 +211,8 @@ async def main():
         ud = app.user_data[A]
         lid = next(iter(ud["lectures"]))
         assert ud["lectures"][lid]["pdf_file_id"].startswith("doc"), "PDF file id saved"
+        assert sorted(ud["lectures"][lid]["files"]) == ["glossary", "questions", "summary", "visuals"], "four files"
+        assert any(ch == A and n == "sendMediaGroup" and p.get("files") == 4 for ch, n, p in SENT), "sent together"
         assert (TMP / "data" / "lectures" / str(A) / f"{lid}.json").exists(), "lecture saved on disk"
         cid = ud["lectures"][lid]["course"]
         assert ud["courses"][cid]["name"] == "أحياء"
@@ -225,10 +237,10 @@ async def main():
         await send(msg(A, text="فسيولوجي"))
         assert ud["courses"][ud["lectures"][lid]["course"]]["name"] == "فسيولوجي"
 
-        # buttons under the PDF: divisions only when the lecture has them
-        kb = [b for chat, name, p in SENT if chat == A and name == "sendDocument" for b in p.get("buttons", [])]
-        assert f"div:{lid}" in kb and not any(b.startswith(("audio:", "ask:", "tf:", "map:")) for b in kb), kb
-        for action in ("div", "en", "en", "docx", "md", "more", "simp"):
+        # buttons under the files: no buttons for what the files already hold
+        kb = last(A, "حُفظت في مادة")["buttons"]
+        assert f"quiz:{lid}" in kb and not any(b.startswith(("div:", "txt:", "terms:", "tpaper:")) for b in kb), kb
+        for action in ("en", "en", "docx", "md", "more", "simp"):
             await send(press(A, f"{action}:{lid}"))
         assert ud["lectures"][lid]["en_file_id"].startswith("doc"), "English cached"
 
@@ -273,26 +285,6 @@ async def main():
         assert "1 صحيحة من 1" in last(A, "إحصاءاتك")["text"]
         await send(cmd(A, "/invite"))
         last(A, "ادعُ أصدقاءك")
-
-        # teacher: paper, key, quiz link, a student solves it, results
-        await send(cmd(T, "/teacher"))
-        await send(msg(T, voice={"file_id": "v2", "file_unique_id": "b", "duration": 5}))
-        await send(press(T, "go:"))
-        await asyncio.sleep(0.5)
-        tlid = next(iter(app.user_data[T]["lectures"]))
-        await send(press(T, f"more:{tlid}"))
-        assert any(b.startswith("tpaper:") for b in last(T, "⋯")["buttons"])
-        for action in ("tpaper", "tkey", "tquiz"):
-            await send(press(T, f"{action}:{tlid}"))
-        qtoken = last(T, "?start=t_")["text"].split("start=t_")[1].split()[0]
-        POLLS.clear()
-        await send(cmd(B, f"/start t_{qtoken}"))
-        assert len(POLLS) == 2, POLLS
-        await send(answer(B, POLLS[0], 1))
-        await send(answer(B, POLLS[1], 0))
-        await send(cmd(T, "/results"))
-        await send(press(T, f"tres:{qtoken}"))
-        assert "خالد: 1/2" in last(T, "طالب واحد")["text"], last(T, "طالب واحد")["text"]
 
         # old-format lecture (kept in memory by an earlier version) moves to disk when opened
         app.user_data[A]["lectures"]["old1"] = dict(ANALYSIS, transcript="[00:00] قديم", time=1.0)
@@ -436,9 +428,7 @@ async def main():
         assert LANGS[-1] == "en"
         elid = max(app.user_data[A]["lectures"], key=lambda k: app.user_data[A]["lectures"][k]["time"])
         assert app.user_data[A]["lectures"][elid]["lang"] == "en"
-        assert f"terms:{elid}" in find_button(A, f"terms:{elid}")
-        await send(press(A, f"terms:{elid}"))
-        assert "ATP" in last(A, "مصطلحات «")["text"]
+        assert f"en:{elid}" not in last(A, "حُفظت في مادة")["buttons"], "no English version of an English lecture"
         await send(press(A, "lang:"))  # (no collector open: just switches back)
         assert app.user_data[A]["lecture_lang"] == "ar"
         ecid = app.user_data[A]["lectures"][elid]["course"]
@@ -481,5 +471,5 @@ if __name__ == "__main__":
     asyncio.run(main())
     for chat, name, p in SENT:
         if name not in ("getMe", "sendChatAction", "answerCallbackQuery", "deleteMessage", "getFile"):
-            print(chat, name, {k: v[:120] for k, v in p.items() if k != "buttons"})
+            print(chat, name, {k: str(v)[:120] for k, v in p.items() if k != "buttons"})
     print("\nALL FLOWS PASSED")

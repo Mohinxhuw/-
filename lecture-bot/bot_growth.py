@@ -1,16 +1,12 @@
-"""Growth: statistics, invite links, the free hour, and the teacher version.
+"""Growth: statistics, invite links, the free hour, and the owner's tools.
 
 Every new student gets an hour of free recordings, and every REFERRALS_PER_CREDIT friends they bring
 add Stars to their wallet (see bot_wallet).
 """
 import asyncio
 import datetime as dt
-import shutil
-import tempfile
 import time
-import uuid
 from html import escape
-from pathlib import Path
 
 from telegram import InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -20,7 +16,7 @@ from telegram.ext import CommandHandler, ContextTypes
 import botkit
 import bot_wallet
 from botkit import button, log
-from lecturebot import analyze, config, exports, library, media, pipeline, render, study
+from lecturebot import analyze, config, library, media, pipeline, study
 
 
 def _questions(n: int) -> str:
@@ -162,15 +158,6 @@ async def on_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         s["correct"] += int(right)
         c, t = s["by_lecture"].get(info["lid"], (0, 0))
         s["by_lecture"][info["lid"]] = (c + int(right), t + 1)
-    elif info["kind"] == "tq":
-        quiz = context.bot_data.get("tquiz", {}).get(info["token"])
-        if quiz:
-            r = quiz["answers"].setdefault(str(ans.user.id), {"name": ans.user.full_name, "correct": 0, "answered": 0})
-            r["answered"] += 1
-            r["correct"] += int(right)
-            q = quiz.setdefault("per_question", {}).setdefault(str(info["q"]), [0, 0])
-            q[0] += int(right)
-            q[1] += 1
     hook = botkit.POLL_HOOKS.get(info["kind"])
     if hook:
         await hook(context, info, right)
@@ -185,112 +172,6 @@ def prune_polls(context) -> None:
 
 async def _prune_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     prune_polls(context)
-
-
-# ---------- teacher version ----------
-
-async def teacher_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    ud = context.user_data
-    ud["teacher"] = not ud.get("teacher")
-    if ud["teacher"]:
-        await update.effective_message.reply_text(
-            "👨‍🏫 <b>تم تفعيل نسخة المعلم</b>\nأرسل تسجيل شرحك، ثم من «⋯ المزيد» تحت الملف تجد:\n"
-            "• 📝 ورقة اختبار جاهزة للطباعة (وملف Word للتعديل)\n• 🔑 نموذج الإجابة\n"
-            "• 🔗 اختبار لطلابك برابط: يحلّونه هنا، وتصلك نتائجهم بالأمر /results\n\nلإيقافها أرسل /teacher مرة أخرى.",
-            parse_mode=ParseMode.HTML)
-    else:
-        await update.effective_message.reply_text("تم إيقاف نسخة المعلم.")
-
-
-async def on_paper(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    chat, name = update.effective_chat.id, pipeline.safe_name(lec["title"])
-    work = Path(tempfile.mkdtemp(prefix="paper_", dir=botkit.work_root()))
-    try:
-        pdf = await asyncio.to_thread(render.write_pdf, exports.exam_paper_html(lec, False), work / f"{name}-exam.pdf")
-        with open(pdf, "rb") as fh:
-            await context.bot.send_document(chat, fh, filename=pdf.name, caption="📝 ورقة الاختبار جاهزة للطباعة.")
-        data = await asyncio.to_thread(exports.exam_paper_docx, lec)
-        await context.bot.send_document(chat, data, filename=f"{name}-exam.docx", caption="📤 نسخة Word للتعديل.")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-async def on_key(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    name = pipeline.safe_name(lec["title"])
-    work = Path(tempfile.mkdtemp(prefix="key_", dir=botkit.work_root()))
-    try:
-        pdf = await asyncio.to_thread(render.write_pdf, exports.exam_paper_html(lec, True), work / f"{name}-answers.pdf")
-        with open(pdf, "rb") as fh:
-            await context.bot.send_document(update.effective_chat.id, fh, filename=pdf.name, caption="🔑 نموذج الإجابة.")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-async def on_teacher_quiz(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    token = uuid.uuid4().hex[:10]
-    context.bot_data.setdefault("tquiz", {})[token] = {
-        "owner": update.effective_user.id, "title": lec["title"], "mcq": lec.get("mcq", []),
-        "tf": lec.get("true_false", []), "answers": {}, "ts": time.time()}
-    link = f"https://t.me/{context.bot.username}?start=t_{token}"
-    n = len(lec.get("mcq", [])) + len(lec.get("true_false", []))
-    await context.bot.send_message(update.effective_chat.id,
-                                   f"🔗 اختبار «{escape(lec['title'])}» ({_questions(n)}). أرسل هذا الرابط لطلابك:\n\n{link}\n\n"
-                                   "يحلّونه داخل تيليجرام، وترى نتائجهم بالأمر /results", parse_mode=ParseMode.HTML,
-                                   disable_web_page_preview=True)
-
-
-async def start_teacher_quiz(update: Update, context, token: str, new: bool) -> bool:
-    quiz = context.bot_data.get("tquiz", {}).get(token)
-    chat = update.effective_chat.id
-    if not quiz:
-        await update.effective_message.reply_text("رابط الاختبار لم يعد صالحاً.")
-        return True
-    if new:
-        welcome_credits(context.user_data)
-    n = len(quiz["mcq"]) + len(quiz["tf"])
-    await update.effective_message.reply_text(f"📝 اختبار «{quiz['title']}» من معلمك: {_questions(n)}. بالتوفيق!")
-    i = 0
-    for q in quiz["mcq"]:
-        i += 1
-        await botkit.send_quiz(context, chat, f"{i}. {q['question']}", q["options"], q["answer_index"],
-                               q.get("explanation", ""), "", {"kind": "tq", "token": token, "q": i})
-    for t in quiz["tf"]:
-        i += 1
-        await botkit.send_quiz(context, chat, f"{i}. صح أم خطأ؟ {t['statement']}", ["صح", "خطأ"], 0 if t["answer"] else 1,
-                               t.get("explanation", ""), "", {"kind": "tq", "token": token, "q": i})
-    return True
-
-
-async def results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    uid = update.effective_user.id
-    mine = [(k, q) for k, q in context.bot_data.get("tquiz", {}).items() if q["owner"] == uid]
-    if not mine:
-        await update.effective_message.reply_text("لا توجد اختبارات بعد. فعّل /teacher وأرسل شرحك، ثم أنشئ اختباراً لطلابك.")
-        return
-    rows = [[button(f"📝 {q['title'][:40]} ({len(q['answers'])})", f"tres:{k}")]
-            for k, q in sorted(mine, key=lambda kq: -kq[1]["ts"])[:15]]
-    await update.effective_message.reply_text("📊 اختر الاختبار لترى نتائج طلابك:", reply_markup=InlineKeyboardMarkup(rows))
-
-
-async def on_results(update: Update, context, token: str) -> None:
-    quiz = context.bot_data.get("tquiz", {}).get(token)
-    if not quiz or quiz["owner"] != update.effective_user.id:
-        return
-    total = len(quiz["mcq"]) + len(quiz["tf"])
-    people = sorted(quiz["answers"].values(), key=lambda r: -r["correct"])
-    lines = [f"📊 <b>{escape(quiz['title'])}</b> · {_questions(total)} · "
-             + botkit.count(len(people), "طالب واحد", "طالبان", "طلاب", "طالباً")]
-    if people:
-        avg = sum(r["correct"] for r in people) / len(people)
-        lines.append(f"المتوسط: {round(avg, 1)} من {total}\n")
-        lines += [f"• {escape(r['name'])}: {r['correct']}/{total}" + ("" if r["answered"] >= total else
-                                                                       f" (أجاب {r['answered']})") for r in people[:50]]
-        hard = sorted(((c / t, int(q)) for q, (c, t) in quiz.get("per_question", {}).items() if t >= 3))[:3]
-        if hard and hard[0][0] < 0.5:
-            lines.append("\n⚠️ أصعب الأسئلة: " + "، ".join(f"السؤال {q} ({round(a * 100)}%)" for a, q in hard if a < 0.5))
-    else:
-        lines.append("لم يحل أحد الاختبار بعد.")
-    await botkit.send_long(context, update.effective_chat.id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # ---------- owner tools: claiming the bot, comparing models ----------
@@ -407,9 +288,8 @@ async def run_compare(context, chat_id: int, status, sources, work, major, image
         counts = (f"{len(a.get('sections', []))} قسماً · {len(a.get('mcq', []))} اختيار · {len(a.get('true_false', []))} "
                   f"صح/خطأ · {len(a.get('essay', []))} مقالي · {len(a.get('flashcards', []))} بطاقة · "
                   f"{len(a.get('divisions', []))} تقسيم{dropped}")
-        with open(res.pdf_path, "rb") as fh:
-            await context.bot.send_document(chat_id, fh, filename=res.pdf_path.name,
-                                            caption=f"🔬 {label}: ${u.get('cost', 0):.2f} لهذه المحاضرة\n{counts}")
+        await botkit.send_files(context, chat_id, res.extra["files"],
+                                f"🔬 {label}: ${u.get('cost', 0):.2f} لهذه المحاضرة\n{counts}")
         per_hour = u.get("cost", 0) / hours + GROQ_DOLLARS_PER_HOUR
         lines.append(f"<b>{label}</b>: ${u.get('cost', 0):.2f} (Claude) · وقت الكتابة {botkit.minutes(seconds)}\n"
                      f"   تكلفة ساعة المحاضرة كاملة تقريباً: <b>${per_hour:.2f}</b> (مع تحويل الصوت)\n"
@@ -422,11 +302,9 @@ def register(app) -> None:
     app.add_handler(CommandHandler("owner", owner_cmd))
     app.add_handler(CommandHandler("compare", compare_cmd))
     app.add_handler(CommandHandler("cookies", cookies_cmd))
-    for name, fn in (("stats", stats_cmd), ("invite", invite_cmd), ("teacher", teacher_cmd), ("results", results_cmd)):
+    for name, fn in (("stats", stats_cmd), ("invite", invite_cmd)):
         app.add_handler(CommandHandler(name, fn))
     app.job_queue.run_repeating(_prune_job, interval=86400, first=3600)
 
 
-botkit.LECTURE_BUTTONS.update({"tpaper": on_paper, "tkey": on_key, "tquiz": on_teacher_quiz})
-botkit.BUTTONS.update({"tres": on_results})
-botkit.START_LINKS.update({"r": start_referral, "t": start_teacher_quiz})
+botkit.START_LINKS.update({"r": start_referral})
