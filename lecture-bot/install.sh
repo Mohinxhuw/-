@@ -85,6 +85,12 @@ if ! grep -qE '^TELEGRAM_API_ID=' .env; then
   set_env TELEGRAM_API_ID "$API_ID"
 fi
 
+# A private code to claim the bot as its owner (/owner <code> in Telegram).
+if ! grep -qE '^OWNER_CODE=' .env; then
+  set_env OWNER_CODE "$(printf '%06d' $(( (RANDOM * 32768 + RANDOM) % 1000000 )))"
+fi
+
 echo ">> Building and starting the bot (first build takes several minutes)"
 docker compose up -d --build
 echo ">> Done. Logs: cd $DIR/lecture-bot && docker compose logs -f bot"
+echo ">> Owner code: send this to your bot in Telegram:  /owner $(grep -E '^OWNER_CODE=' .env | cut -d= -f2)"

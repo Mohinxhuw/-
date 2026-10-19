@@ -18,8 +18,8 @@ from telegram.error import TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
 import botkit
-from botkit import button
-from lecturebot import config, exports, library, pipeline, render, study
+from botkit import button, log
+from lecturebot import analyze, config, exports, library, pipeline, render, study
 
 
 def _questions(n: int) -> str:
@@ -303,7 +303,72 @@ async def on_results(update: Update, context, token: str) -> None:
     await botkit.send_long(context, update.effective_chat.id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
+# ---------- owner tools: claiming the bot, comparing models ----------
+
+async def owner_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    code = (context.args or [""])[0]
+    if not config.OWNER_CODE or code != config.OWNER_CODE:
+        await update.effective_message.reply_text("الرمز غير صحيح.")
+        return
+    context.bot_data["owner"] = update.effective_user.id
+    await update.effective_message.reply_text("👑 أنت مالك البوت الآن. لديك أمر /compare لمقارنة نماذج Claude.")
+
+
+async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not botkit.is_owner(context, update.effective_user.id):
+        return
+    context.user_data["compare_next"] = True
+    await update.effective_message.reply_text(
+        "🔬 أرسل الآن تسجيل محاضرة (مع شرائحها إن أردت). سأحوّلها إلى نص مرة واحدة، ثم أكتب ملخصها وأسئلتها "
+        "بنموذجين: Opus وSonnet، وأرسل لك الملفين مع تكلفة كل واحد لتقارن.\n"
+        "💡 محاضرة من 20 إلى 30 دقيقة تكفي للمقارنة وتوفّر التكلفة.")
+
+
+COMPARE_MODELS = (("Opus", "claude-opus-5-5"), ("Sonnet", "claude-sonnet-5-5"))
+GROQ_DOLLARS_PER_HOUR = 0.111
+
+
+async def run_compare(context, chat_id: int, status, sources, work, major, images, mats) -> None:
+    """Transcribe once, write the notes and questions with each model, send both PDFs with their costs."""
+    await status.edit_text("🔬 مقارنة: أحوّل الكلام إلى نص…")
+    segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats)
+    await status.edit_text("🔬 مقارنة: يكتب النموذجان الملخص والأسئلة في الوقت نفسه… (دقائق)")
+
+    async def one(label, model):
+        started = time.time()
+        result = await asyncio.to_thread(analyze.analyze, segments, major=major, images=images, duration=duration,
+                                         materials=mats, parts=parts, model=model)
+        res = await asyncio.to_thread(pipeline.finish, result, segments, work, sources[0], duration, f"-{label}")
+        return label, res, time.time() - started
+
+    outcomes = await asyncio.gather(*(one(label, model) for label, model in COMPARE_MODELS), return_exceptions=True)
+    await status.delete()
+    hours = max(duration / 3600, 0.01)
+    lines = [f"🔬 <b>نتيجة المقارنة</b> · محاضرة {botkit.minutes(duration)}", ""]
+    for outcome in outcomes:
+        if isinstance(outcome, Exception):
+            log.warning("compare model failed: %s", outcome)
+            lines.append(f"⚠️ فشل أحد النموذجين: {escape(str(outcome))[:200]}")
+            continue
+        label, res, seconds = outcome
+        a, u = res.analysis, res.analysis.get("_usage", {})
+        counts = (f"{len(a.get('sections', []))} قسماً · {len(a.get('mcq', []))} اختيار · {len(a.get('true_false', []))} "
+                  f"صح/خطأ · {len(a.get('essay', []))} مقالي · {len(a.get('flashcards', []))} بطاقة · "
+                  f"{len(a.get('divisions', []))} تقسيم")
+        with open(res.pdf_path, "rb") as fh:
+            await context.bot.send_document(chat_id, fh, filename=res.pdf_path.name,
+                                            caption=f"🔬 {label}: ${u.get('cost', 0):.2f} لهذه المحاضرة\n{counts}")
+        per_hour = u.get("cost", 0) / hours + GROQ_DOLLARS_PER_HOUR
+        lines.append(f"<b>{label}</b>: ${u.get('cost', 0):.2f} (Claude) · وقت الكتابة {botkit.minutes(seconds)}\n"
+                     f"   تكلفة ساعة المحاضرة كاملة تقريباً: <b>${per_hour:.2f}</b> (مع تحويل الصوت)\n"
+                     f"   {u.get('input', 0):,} رمز داخل · {u.get('output', 0):,} رمز خارج")
+    lines += ["", "قارن الملفين: دقة الملخص، ووضوح الأسئلة، وصحة المصطلحات. ثم أخبرني أيهما نعتمد."]
+    await context.bot.send_message(chat_id, "\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 def register(app) -> None:
+    app.add_handler(CommandHandler("owner", owner_cmd))
+    app.add_handler(CommandHandler("compare", compare_cmd))
     for name, fn in (("stats", stats_cmd), ("invite", invite_cmd), ("teacher", teacher_cmd), ("results", results_cmd)):
         app.add_handler(CommandHandler(name, fn))
     app.job_queue.run_repeating(_prune_job, interval=86400, first=3600)

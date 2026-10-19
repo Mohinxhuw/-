@@ -75,6 +75,9 @@ Write in clear, correct Modern Standard Arabic. Write each English technical ter
 exactly as used in the field (for example Mitochondria, not ميتوكوندريا), with its Arabic meaning where \
 it helps.
 
+When there is no recording, the lecture's slides, files or photos of book pages are the only source: \
+then every "time" value is an empty string, and quotes are taken from the documents' text.
+
 Accuracy matters more than anything else: students will study from this and be examined on it.
 - Every statement must be something the lecturer actually said or showed. Do not add facts, even true \
 ones, that the lecture did not cover.
@@ -143,8 +146,34 @@ points a full answer must contain, used to grade the student.
 - flashcards: front is a question or a term, back is the short answer. Between 8 and 25 cards."""
 
 
+# Dollars per million tokens: input, output, cache read, cache write.
+PRICES = {
+    "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.5),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+}
+
+
 class AnalysisError(Exception):
     pass
+
+
+def cost_of(usage, model: str) -> dict:
+    """Tokens and dollars of one response (priced by the model that actually answered)."""
+    p_in, p_out, p_read, p_write = PRICES.get(model, PRICES["claude-opus-5-5"])
+    u = {"model": model, "input": usage.input_tokens or 0, "output": usage.output_tokens or 0,
+         "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+         "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0}
+    u["cost"] = round((u["input"] * p_in + u["output"] * p_out + u["cache_read"] * p_read
+                       + u["cache_write"] * p_write) / 1e6, 4)
+    return u
+
+
+def add_usage(total: dict, u: dict) -> dict:
+    for k in ("input", "output", "cache_read", "cache_write", "cost"):
+        total[k] = round(total.get(k, 0) + u.get(k, 0), 4)
+    total["model"] = u.get("model", total.get("model"))
+    return total
 
 
 def _transcript_text(segments: list[Segment]) -> str:
@@ -174,19 +203,22 @@ def _content(segments, major, images, duration, materials, parts) -> list[dict]:
         intro.append("التسجيل مكوّن من عدة أجزاء متتالية: "
                      + "، ".join(f"الجزء {i} يبدأ عند {fmt_time(t)}" + (f" ({name})" if name else "")
                                 for i, (t, name) in enumerate(parts, 1)) + ".")
-    intro.append(f"مدة المحاضرة: {fmt_time(duration)}.")
+    if segments:
+        intro.append(f"مدة المحاضرة: {fmt_time(duration)}.")
+    else:
+        intro.append("لا يوجد تسجيل لهذه المحاضرة: المصدر هو الملفات والصور المرفقة وحدها.")
     slides = [m for m in materials if m.text and not m.pdf]
     slide_text = "".join(f"\n\nنص الشرائح ({m.name}):\n<slides>\n{m.text[:60000]}\n</slides>" for m in slides)
-    content.append({"type": "text", "text": "\n".join(intro) + slide_text
-                    + f"\n\nنص المحاضرة:\n<transcript>\n{_transcript_text(segments)}\n</transcript>"})
+    transcript = (f"\n\nنص المحاضرة:\n<transcript>\n{_transcript_text(segments)}\n</transcript>" if segments else "")
+    content.append({"type": "text", "text": "\n".join(intro) + slide_text + transcript})
     return content
 
 
-def _call(system: str, content: list[dict], schema: dict, on_text=None) -> dict:
+def _call(system: str, content: list[dict], schema: dict, on_text=None, model: str | None = None) -> tuple[dict, dict]:
     client = anthropic.Anthropic()
     try:
         with client.beta.messages.stream(
-            model=config.CLAUDE_MODEL,
+            model=model or config.CLAUDE_MODEL,
             max_tokens=64000,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
@@ -207,39 +239,47 @@ def _call(system: str, content: list[dict], schema: dict, on_text=None) -> dict:
     if message.stop_reason == "max_tokens":
         raise AnalysisError("The study material was too long to finish")
     text = "".join(b.text for b in message.content if b.type == "text")
+    answered_by = getattr(message, "model", None) or model or config.CLAUDE_MODEL
     try:
-        return json.loads(text)
+        return json.loads(text), cost_of(message.usage, answered_by)
     except json.JSONDecodeError as e:
         raise AnalysisError("The model returned invalid JSON") from e
 
 
 def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
             duration: float = 0.0, materials: list | None = None, parts: list[tuple[float, str]] | None = None,
-            on_section=None) -> dict:
-    """Return the study material (all PROPS keys).
+            on_section=None, model: str | None = None) -> dict:
+    """Return the study material (all PROPS keys), plus "_usage": tokens and dollars spent.
 
     materials: lecture files (lecturebot.materials.Material). parts: (start_seconds, title) of each
     recording when several were joined. on_section(section) is called as each summary section is written.
     """
     content = _content(segments, major, images, duration, materials or [], parts)
     questions: dict = {}
+    usage: dict = {}
     failure: list[Exception] = []
 
     def ask_questions():
         try:
-            questions.update(_call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA))
+            data, u = _call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA, model=model)
+            questions.update(data)
+            questions["_q_usage"] = u
         except Exception as e:  # reported after the notes are done
             failure.append(e)
 
     worker = threading.Thread(target=ask_questions, daemon=True)
     worker.start()
     sections = _SectionStream(on_section) if on_section else None
-    result = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None)
+    result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
+    add_usage(usage, u)
     worker.join()
     if failure:
         raise failure[0] if isinstance(failure[0], AnalysisError) else AnalysisError(str(failure[0]))
+    add_usage(usage, questions.pop("_q_usage"))
     result.update(questions)
-    _clean(result, _transcript_text(segments))
+    source_text = _transcript_text(segments) + "\n" + "\n".join(m.text for m in (materials or []) if m.text)
+    _clean(result, source_text)
+    result["_usage"] = usage
     return result
 
 
@@ -313,7 +353,10 @@ def _words(text: str) -> list[str]:
 
 
 def supported(evidence: str, transcript_words: set[str]) -> bool:
-    """True when most words of the quoted evidence occur in the transcript."""
+    """True when most words of the quoted evidence occur in the transcript. Without any source text
+    (a lecture made only of photos) there is nothing to check against, so everything passes."""
+    if not transcript_words:
+        return True
     words = _words(evidence)
     if len(words) < 3:
         return False

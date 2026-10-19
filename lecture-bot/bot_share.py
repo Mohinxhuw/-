@@ -78,8 +78,10 @@ async def on_markdown(update: Update, context, lid: str, lec: dict, extra: str) 
 
 # ---------- copying a lecture to another student ----------
 
-def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str) -> str | None:
-    """Put a copy of a lecture in another student's library; returns its new id there."""
+def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str,
+                 course: str | None = None) -> str | None:
+    """Put a copy of a lecture in another student's library (in `course` if given, else filed by its
+    subject); returns its new id there."""
     owner_ud = context.application.user_data.get(from_uid, {})
     full = store.get(from_uid, owner_ud, lid)
     if not full:
@@ -89,7 +91,10 @@ def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str
     full = dict(full, time=time.time(), shared_from=sender_name, course=None)
     full.pop("en_file_id", None)
     store.put(to_uid, to_ud, new_lid, full)
-    library.assign_course(to_ud, new_lid, full.get("subject", ""))
+    if course and course in library.courses(to_ud):
+        to_ud["lectures"][new_lid]["course"] = course
+    else:
+        library.assign_course(to_ud, new_lid, full.get("subject", ""))
     study.add_cards(to_ud.setdefault("deck", []), full.get("flashcards", []), full.get("title", ""))
     to_ud.setdefault("reminder_hour", config.DEFAULT_REMINDER_HOUR)
     context.application.mark_data_for_update_persistence(user_ids=[to_uid])
@@ -188,11 +193,22 @@ async def on_group(update: Update, context, arg: str) -> None:
         return
     if step == "v":
         link = f"https://t.me/{context.bot.username}?start=g_{gid}"
+        course = ud.get("group_course", {}).get(gid)
+        cname = library.courses(ud).get(course, {}).get("name") if course else None
         rows = [[button("🚪 مغادرة المجموعة", f"grp:leave:{gid}")]]
+        if cname:
+            rows.insert(0, [button("⏸ إيقاف الإرسال التلقائي", f"grp:unlink:{gid}")])
+        auto = (f"🔄 محاضرات «{escape(cname)}» التي ترفعها تصل للمجموعة تلقائياً." if cname else
+                "بعد أول محاضرة ترفعها أسألك: هل أرسل محاضرات مادتها للمجموعة تلقائياً؟")
         await context.bot.send_message(
-            chat, f"👥 <b>{escape(g['name'])}</b> · {_members(len(g['members']))}\n\nرابط الدعوة (أرسله لزملائك):\n{link}\n\n"
-                  "لإرسال محاضرة للمجموعة: افتحها واضغط «⋯ المزيد» ← «👥 أرسلها لمجموعة».",
+            chat, f"👥 <b>{escape(g['name'])}</b> · {_members(len(g['members']))}\n\n{auto}\n\n"
+                  f"رابط الدعوة (أرسله لزملائك):\n{link}",
             parse_mode=ParseMode.HTML, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(rows))
+    elif step == "unlink":
+        ud.get("group_course", {}).pop(gid, None)
+        ud.setdefault("group_declined", {}).pop(gid, None)
+        await context.bot.send_message(chat, f"⏸ أوقفت الإرسال التلقائي لمجموعة «{g['name']}». "
+                                             "تستطيع إرسال أي محاضرة يدوياً من «⋯ المزيد».")
     elif step == "leave":
         g["members"].remove(uid)
         ud["groups"] = [x for x in ud.get("groups", []) if x != gid]
@@ -236,6 +252,29 @@ async def start_group(update: Update, context, gid: str, new: bool) -> bool:
     return True
 
 
+async def send_to_group(context, uid: int, lid: str, gid: str) -> int:
+    """Copy a lecture into every other member's library and send it to them; returns how many got it."""
+    g = context.bot_data.get("groups", {}).get(gid)
+    ud = context.application.user_data[uid]
+    meta = ud.get("lectures", {}).get(lid)
+    if not g or not meta:
+        return 0
+    name, n = ud.get("name") or "زميلك", 0
+    for member in g["members"]:
+        if member == uid:
+            continue
+        link = context.application.user_data[member].get("group_course", {}).get(gid)
+        new_lid = copy_lecture(context, uid, lid, member, name, course=link)
+        if new_lid:
+            try:
+                await _deliver(context, member, new_lid,
+                               f"👥 {name} شارك في «{g['name']}»: ملخص «{meta['title']}». حفظته في مكتبتك /library")
+                n += 1
+            except TelegramError as e:
+                log.info("group delivery to %s failed: %s", member, e)
+    return n
+
+
 async def on_to_group(update: Update, context, lid: str, lec: dict, extra: str) -> None:
     ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
     groups = my_groups(context, ud)
@@ -249,19 +288,55 @@ async def on_to_group(update: Update, context, lid: str, lec: dict, extra: str) 
     g = dict(groups).get(extra)
     if not g:
         return
-    name, n = botkit.first_name(update), 0
-    for member in g["members"]:
-        if member == uid:
-            continue
-        new_lid = copy_lecture(context, uid, lid, member, name)
-        if new_lid:
-            try:
-                await _deliver(context, member, new_lid,
-                               f"👥 {name} شارك في «{g['name']}»: ملخص «{lec['title']}». حفظته في مكتبتك /library")
-                n += 1
-            except TelegramError as e:
-                log.info("group delivery to %s failed: %s", member, e)
+    ud["name"] = botkit.first_name(update)
+    n = await send_to_group(context, uid, lid, extra)
     await context.bot.send_message(chat, f"👥 أرسلتها إلى أعضاء «{g['name']}» ({_members(n)}). شكراً لأنك تساعد زملاءك!")
+
+
+# ---------- automatic sharing ----------
+# Each member links a group to one of their courses. A lecture filed in that course goes to the group
+# by itself. The first time, the bot asks; after that it never asks again for that group and course.
+
+async def auto_share(context, uid: int, lid: str) -> None:
+    ud = context.application.user_data[uid]
+    course = ud.get("lectures", {}).get(lid, {}).get("course")
+    links, declined = ud.setdefault("group_course", {}), ud.setdefault("group_declined", {})
+    for gid, g in my_groups(context, ud):
+        link = links.get(gid)
+        if link == course:
+            n = await send_to_group(context, uid, lid, gid)
+            if n:
+                await context.bot.send_message(uid, f"👥 أرسلتها تلقائياً لمجموعة «{g['name']}» ({_members(n)}).")
+        elif link is None and course not in declined.get(gid, []):
+            asked = ud.setdefault("group_asked", [])
+            if f"{gid}:{course}" in asked:  # already asked; waiting for the answer
+                continue
+            asked.append(f"{gid}:{course}")
+            cname = library.courses(ud).get(course, {}).get("name", "هذه المادة")
+            await context.bot.send_message(
+                uid, f"👥 هل أرسل محاضرات «{cname}» لمجموعة «{g['name']}» تلقائياً من الآن؟\n"
+                     "(تصل لزملائك بملخصها وأسئلتها فور انتهائها)",
+                reply_markup=InlineKeyboardMarkup([[button("✅ نعم، دائماً", f"gl:{gid}:{lid}:y"),
+                                                    button("❌ لا", f"gl:{gid}:{lid}:n")]]))
+
+
+async def on_group_link(update: Update, context, arg: str) -> None:
+    gid, lid, answer = (arg.split(":") + ["", "", ""])[:3]
+    ud, uid = context.user_data, update.effective_user.id
+    course = ud.get("lectures", {}).get(lid, {}).get("course")
+    g = context.bot_data.get("groups", {}).get(gid)
+    if not g or not course:
+        return
+    ud["name"] = botkit.first_name(update)
+    if answer == "y":
+        ud.setdefault("group_course", {})[gid] = course
+        n = await send_to_group(context, uid, lid, gid)
+        await update.callback_query.edit_message_text(
+            f"✅ تم: محاضرات «{library.courses(ud)[course]['name']}» تصل لمجموعة «{g['name']}» تلقائياً. "
+            f"وأرسلت هذه الآن ({_members(n)}).")
+    else:
+        ud.setdefault("group_declined", {}).setdefault(gid, []).append(course)
+        await update.callback_query.edit_message_text("👍 حسناً، لن أرسل محاضرات هذه المادة للمجموعة.")
 
 
 def register(app) -> None:
@@ -270,6 +345,6 @@ def register(app) -> None:
 
 botkit.LECTURE_BUTTONS.update({"en": on_english, "docx": on_docx, "md": on_markdown,
                                "share": on_share, "tog": on_to_group})
-botkit.BUTTONS.update({"grp": on_group})
+botkit.BUTTONS.update({"grp": on_group, "gl": on_group_link})
 botkit.TEXT_INPUTS.update({"group_name": input_group_name})
 botkit.START_LINKS.update({"s": start_shared, "g": start_group})

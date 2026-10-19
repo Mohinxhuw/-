@@ -71,3 +71,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
 FONTS_DIR = BASE_DIR / "fonts"
 
 DEBUG = _bool("DEBUG")
+
+# install.sh writes a random code here; sending "/owner <code>" makes that Telegram account the owner
+# (who can run /compare and see costs with /costs).
+OWNER_CODE = os.environ.get("OWNER_CODE", "")

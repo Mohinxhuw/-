@@ -16,16 +16,22 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 TMP = Path(tempfile.mkdtemp(prefix="flows_"))
 os.environ.update(TELEGRAM_BOT_TOKEN="123:abc", DATA_DIR=str(TMP / "data"), WORK_DIR=str(TMP / "work"),
-                  PARTS_WAIT_SECONDS="1")
+                  PARTS_WAIT_SECONDS="1", OWNER_CODE="424242")
 
 from telegram import Update  # noqa: E402
 from telegram.ext import Application  # noqa: E402
 from telegram.request import BaseRequest  # noqa: E402
 
 import bot  # noqa: E402
-from lecturebot import pipeline, study  # noqa: E402
+from lecturebot import analyze, pipeline, study  # noqa: E402
 from lecturebot.pipeline import LectureResult  # noqa: E402
 
+def _sample_pdf() -> bytes:
+    from weasyprint import HTML
+    return HTML(string="<p>Mitochondria الخلية وحدة بناء الكائن الحي</p>").write_pdf()
+
+
+SAMPLE_PDF = _sample_pdf()
 SENT: list[tuple[int, str, dict]] = []
 POLLS: list[str] = []
 _mid = [100]
@@ -41,8 +47,8 @@ class FakeTelegram(BaseRequest):
 
     async def do_request(self, url, method, request_data=None, **kw):
         name = url.rsplit("/", 1)[-1]
-        if "/file/bot" in url:
-            return 200, b"\0" * 2000
+        if "/file/bot" in url:  # every download is a small real PDF (fine for audio too: the pipeline is stubbed)
+            return 200, SAMPLE_PDF
         params = request_data.parameters if request_data else {}
         chat = int(params.get("chat_id", 0) or 0)
         keep = {k: str(v)[:2000] for k, v in params.items() if k in ("text", "caption", "question")}
@@ -88,7 +94,11 @@ ANALYSIS = {
 }
 
 
+RUNS = []
+
+
 def fake_run(sources, work, *a):
+    RUNS.append(len(sources))
     pdf = work / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     r = LectureResult(dict(ANALYSIS), [], pdf, "[00:00] نتحدث اليوم عن الميتوكوندريا\n\n[00:30] التحلل السكري", sources[0])
@@ -97,6 +107,21 @@ def fake_run(sources, work, *a):
 
 
 pipeline.run = fake_run
+
+
+def fake_run_files(work, title, *a):
+    RUNS.append("files")
+    pdf = work / "f.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    from lecturebot.media import Source
+    return LectureResult(dict(ANALYSIS, title="فصل الخلية"), [], pdf, "الخلية وحدة بناء الكائن الحي",
+                         Source(path=Path("f"), title=title))
+
+
+pipeline.run_files = fake_run_files
+pipeline.transcribe_sources = lambda sources, major, mats, stage=None: ([], 1200.0, [(0, "")])
+analyze.analyze = lambda segs, **kw: dict(ANALYSIS, _usage={"cost": 0.3 if "opus" in kw["model"] else 0.15,
+                                                            "input": 1000, "output": 500})
 study.ask = lambda lec, q, h=None: f"جواب: {q}"
 study.grade_essay = lambda q, a: {"score": 7, "good": "ذكرت مرحلتين", "missing": ["نقل الإلكترونات"], "advice": "اذكر الثالثة"}
 study.translate = lambda lec: dict(ANALYSIS, title="Cellular respiration")
@@ -267,6 +292,59 @@ async def main():
         await send(press(A, "cards:old1"))
         assert "transcript" not in app.user_data[A]["lectures"]["old1"]
         assert (TMP / "data" / "lectures" / str(A) / "old1.json").exists()
+
+        # the same recording again (another student forwards it): no processing, delivered at once
+        before = len(RUNS)
+        await send(msg(B, voice={"file_id": "v1-again", "file_unique_id": "a", "duration": 5}))
+        await send(press(B, "go:"))
+        await asyncio.sleep(0.3)
+        assert len(RUNS) == before, "served from the cache"
+        last(B, "سبق تلخيص هذه المحاضرة")
+
+        # slides only, no recording
+        await send(msg(A, document={"file_id": "d1", "file_unique_id": "d", "file_name": "ch1.pdf",
+                                    "mime_type": "application/pdf", "file_size": 1000}))
+        assert "files:" in last(A, "حفظت الملف")["buttons"]
+        await send(press(A, "files:"))
+        await asyncio.sleep(0.3)
+        assert RUNS[-1] == "files"
+        last(A, "فصل الخلية")
+
+        # automatic group sharing: asked once, then automatic
+        n_b = len(app.user_data[B]["lectures"])
+        await send(msg(A, voice={"file_id": "v3", "file_unique_id": "c3", "duration": 5}))
+        await send(press(A, "go:"))
+        await asyncio.sleep(0.5)
+        yes = find_button(A, f"gl:{gid}:")
+        assert yes.endswith(":y") or yes.endswith(":n")
+        await send(press(A, yes.rsplit(":", 1)[0] + ":y"))
+        assert len(app.user_data[B]["lectures"]) == n_b + 1, "sent after saying yes"
+        await send(msg(A, voice={"file_id": "v4", "file_unique_id": "c4", "duration": 5}))
+        await send(press(A, "go:"))
+        await asyncio.sleep(0.5)
+        assert len(app.user_data[B]["lectures"]) == n_b + 2, "sent automatically"
+        last(A, "أرسلتها تلقائياً")
+
+        # course quiz
+        acid = app.user_data[A]["lectures"][max(app.user_data[A]["lectures"],
+                                                key=lambda k: app.user_data[A]["lectures"][k]["time"])]["course"]
+        await send(press(A, f"cq:{acid}"))
+        last(A, "اختبار شامل")
+        POLLS.clear()
+        await send(press(A, f"cq:{acid}:all"))
+        assert len(POLLS) >= 2, POLLS
+
+        # owner and model comparison
+        await send(cmd(T, "/owner 111"))
+        last(T, "الرمز غير صحيح")
+        await send(cmd(T, "/owner 424242"))
+        assert app.bot_data["owner"] == T
+        await send(cmd(T, "/compare"))
+        await send(msg(T, voice={"file_id": "v5", "file_unique_id": "c5", "duration": 5}))
+        await send(press(T, "go:"))
+        await asyncio.sleep(1.5)
+        assert "Opus" in last(T, "نتيجة المقارنة")["text"] and "Sonnet" in last(T, "نتيجة المقارنة")["text"]
+        last(T, "🔬 Opus: $0.30")
 
         # delete everything
         await send(cmd(B, "/delete"))

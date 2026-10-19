@@ -87,7 +87,8 @@ async def _course(update: Update, context, cid: str) -> None:
     rows = [[button(("✅ " if l in planned_done else "📄 ") + (lectures[l].get("title") or "محاضرة")[:55], f"lib:l:{l}")]
             for l in lids[-25:]]
     rows.append([button("📅 موعد الاختبار", f"lib:date:{cid}"), button("🗓 خطة المذاكرة", f"lib:plan:{cid}")])
-    rows.append([button("🌙 ملخص ليلة الاختبار", f"lib:exam:{cid}"), button("✏️ إعادة التسمية", f"lib:ren:{cid}")])
+    rows.append([button("🧪 اختبار شامل للمادة", f"cq:{cid}"), button("🌙 ملخص ليلة الاختبار", f"lib:exam:{cid}")])
+    rows.append([button("✏️ إعادة التسمية", f"lib:ren:{cid}")])
     rows.append([button("↩️ المكتبة", "lib:home:")])
     await _show(update, context, "\n".join(lines), rows)
 

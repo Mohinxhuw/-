@@ -139,6 +139,11 @@ async def send_lecture_pdf(context, chat_id: int, user_id: int, ud: dict, lid: s
         return False
 
 
+def is_owner(context, user_id: int) -> bool:
+    """The bot's owner, who claimed it with /owner and the code printed by install.sh."""
+    return context.bot_data.get("owner") == user_id
+
+
 def first_name(update: Update) -> str:
     u = update.effective_user
     return (u.first_name or u.username or "زميلك") if u else "زميلك"

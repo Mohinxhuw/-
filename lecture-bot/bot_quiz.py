@@ -9,7 +9,7 @@ from telegram.error import BadRequest
 
 import botkit
 from botkit import button, log
-from lecturebot import store, study
+from lecturebot import library, store, study
 from lecturebot.analyze import AnalysisError
 
 
@@ -137,10 +137,68 @@ async def input_essay_answer(update: Update, context, payload: str) -> None:
                                                                button("⏭ السؤال التالي", f"es:{lid}:{i + 1}:go")]]))
 
 
+# ---------- the course quiz: questions from every lecture of a course ----------
+
+COURSE_QUIZ_SIZE = 20
+
+
+def _weight(stats: dict, lid: str) -> float:
+    """Lectures the student answers badly come up more often (up to three times)."""
+    c, t = stats.get("by_lecture", {}).get(lid, (0, 0))
+    return 1.0 + (2.0 * (1 - c / t) if t >= 2 else 1.0)
+
+
+async def on_course_quiz(update: Update, context, arg: str) -> None:
+    cid, _, kind = arg.partition(":")
+    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
+    course = library.courses(ud).get(cid)
+    if not course:
+        return
+    lectures = [(lid, store.get(uid, ud, lid)) for lid in library.course_lectures(ud, cid)]
+    lectures = [(lid, lec) for lid, lec in lectures if lec]
+    if not kind:
+        n_mcq = sum(len(lec.get("mcq", [])) for _, lec in lectures)
+        n_tf = sum(len(lec.get("true_false", [])) for _, lec in lectures)
+        if not n_mcq + n_tf:
+            await context.bot.send_message(chat, "لا توجد أسئلة في محاضرات هذه المادة بعد.")
+            return
+        rows = [[button("🎲 اختيار من متعدد وصح أو خطأ", f"cq:{cid}:all")]]
+        if n_mcq:
+            rows.append([button("🔘 اختيار من متعدد فقط", f"cq:{cid}:mcq")])
+        if n_tf:
+            rows.append([button("✅❌ صح أو خطأ فقط", f"cq:{cid}:tf")])
+        await context.bot.send_message(
+            chat, f"🧪 <b>اختبار شامل: {escape(course['name'])}</b>\n{_questions(COURSE_QUIZ_SIZE)} من "
+                  f"{botkit.count(len(lectures), 'محاضرة واحدة', 'محاضرتين', 'محاضرات', 'محاضرة')}، "
+                  "وتتكرر أكثر أسئلة المحاضرات التي تحتاج مراجعة.",
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
+        return
+    stats = ud.get("stats", {})
+    pool = []
+    for lid, lec in lectures:
+        w = _weight(stats, lid)
+        if kind in ("mcq", "all"):
+            pool += [(w, lid, q["question"], q["options"], q["answer_index"], q.get("explanation", ""))
+                     for q in lec.get("mcq", [])]
+        if kind in ("tf", "all"):
+            pool += [(w, lid, f"صح أم خطأ؟ {t['statement']}", ["صح", "خطأ"], 0 if t["answer"] else 1,
+                      t.get("explanation", "")) for t in lec.get("true_false", [])]
+    # Weighted sampling without replacement: a higher weight makes a question likelier to be picked.
+    pool.sort(key=lambda item: -(random.random() ** (1 / item[0])))
+    seen, picked = set(), []
+    for item in pool:
+        if item[2] not in seen:  # the same question can come from a lecture shared twice
+            seen.add(item[2])
+            picked.append(item)
+    for i, (_, lid, question, options, correct, explanation) in enumerate(picked[:COURSE_QUIZ_SIZE], 1):
+        await botkit.send_quiz(context, chat, f"{i}. {question}", options, correct, explanation, "",
+                               {"kind": "lecture", "uid": uid, "lid": lid})
+
+
 def register(app) -> None:
     pass
 
 
 botkit.LECTURE_BUTTONS.update({"quiz": on_quiz, "qz": on_kind})
-botkit.BUTTONS.update({"es": on_essay_button})
+botkit.BUTTONS.update({"es": on_essay_button, "cq": on_course_quiz})
 botkit.TEXT_INPUTS.update({"essay_answer": input_essay_answer})

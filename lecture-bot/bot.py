@@ -21,7 +21,7 @@ import bot_share
 import botkit
 from botkit import count as _count, hour_name as _hour_name, keyboard as _keyboard, minutes as _minutes
 from botkit import send_long as _send_long, work_root as _work_root
-from lecturebot import config, library, materials, mindmap, pipeline, store, study
+from lecturebot import cache, config, library, materials, mindmap, pipeline, store, study
 from lecturebot.analyze import MAJOR_NAMES, AnalysisError
 from lecturebot.media import Source, download_url, find_media_url
 
@@ -51,6 +51,7 @@ WELCOME = (
     "مكتبة بموادك، وموعد كل اختبار، وخطة مذاكرة حتى يومه.\n\n"
     "<b>كيف تبدأ؟</b>\n"
     "١. أرسل تسجيل المحاضرة (صوت أو فيديو) أو رابطه.\n"
+    "   ليس لها تسجيل؟ أرسل شرائحها أو صور صفحات الكتاب وحدها.\n"
     "٢. أرفق شرائح المحاضرة إن وُجدت، ليكون الملخص أدق.\n"
     "٣. استلم ملخصك خلال دقائق.\n\n"
     "بقية الأوامر في زر القائمة ☰ أسفل الشاشة."
@@ -241,6 +242,7 @@ async def _start_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _add_part(update: Update, context: ContextTypes.DEFAULT_TYPE, part: dict) -> None:
+    context.user_data["name"] = botkit.first_name(update)
     # Parts left over from before a restart (their countdown is gone) must not join a new lecture.
     parts = context.user_data["parts"] = _fresh(context.user_data.get("parts", []), 30)
     if len(parts) >= config.MAX_PARTS:
@@ -260,8 +262,8 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "أو ارفعه على Google Drive أو يوتيوب وأرسل الرابط.", parse_mode=ParseMode.HTML)
         return
     title = getattr(media, "title", None) or getattr(media, "file_name", None) or ""
-    await _add_part(update, context, {"file_id": media.file_id, "title": Path(title).stem if title else "",
-                                      "ts": time.time()})
+    await _add_part(update, context, {"file_id": media.file_id, "uid": media.file_unique_id,
+                                      "title": Path(title).stem if title else "", "ts": time.time()})
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -322,7 +324,10 @@ async def _after_extra(update: Update, context: ContextTypes.DEFAULT_TYPE, note:
     if context.user_data.get("parts"):
         await _refresh_collector(context, update.effective_chat.id, update.effective_user.id)
     else:
-        await update.effective_message.reply_text(note + "\nأرسل تسجيل المحاضرة، وأضمّ هذا إليها.")
+        await update.effective_message.reply_text(
+            note + "\n\nعندك تسجيل لهذه المحاضرة؟ أرسله الآن وأضمّ هذا إليه.\n"
+                   "أو، إن لم يكن لها تسجيل، أرسل بقية الملفات أو الصفحات ثم اضغط:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📄 لخّص الملفات وحدها", callback_data="files:")]]))
 
 
 # ---------- the lecture job ----------
@@ -338,22 +343,103 @@ async def _download_part(context: ContextTypes.DEFAULT_TYPE, part: dict, work: P
     return Source(path=path, title=part.get("title", ""))
 
 
+def _full_from(result) -> dict:
+    """What is stored for a lecture: its notes, questions and transcript."""
+    a = result.analysis
+    full = {key: a.get(key, []) for key in ("mcq", "true_false", "essay", "flashcards", "sections", "glossary",
+                                            "divisions", "comparisons")}
+    full.update(title=a.get("title", ""), subject=a.get("subject", ""), overview=a.get("overview", ""),
+                transcript=result.transcript_text, ndiv=len(a.get("divisions", [])),
+                duration=result.extra.get("duration", 0), source_url=result.source.url or "")
+    return full
+
+
+async def _save_and_send(context, chat_id: int, user_id: int, full: dict, pdf_path: Path | None = None,
+                         note: str = "") -> str:
+    """Put a finished lecture in the student's library, add its cards, send its PDF; returns its id."""
+    ud = context.user_data
+    lid = uuid.uuid4().hex[:8]
+    full = dict(full, time=time.time())
+    store.put(user_id, ud, lid, full)
+    lectures = ud["lectures"]
+    for old in sorted(lectures, key=lambda k: lectures[k]["time"])[:-KEEP_LECTURES]:
+        store.remove(user_id, ud, old)
+    cid = library.assign_course(ud, lid, full["subject"])
+    added = study.add_cards(ud.setdefault("deck", []), full.get("flashcards", []), full.get("title", ""))
+    ud.setdefault("reminder_hour", config.DEFAULT_REMINDER_HOUR)
+    bot_growth.lecture_done(ud, full)
+    n_questions = len(full["mcq"]) + len(full["true_false"]) + len(full.get("essay", []))
+    caption = ([note] if note else []) + [
+        f"✅ {full.get('title') or 'ملخص المحاضرة'}",
+        f"📁 حُفظت في مادة «{library.courses(ud)[cid]['name']}»",
+        "🧪 " + _count(n_questions, "سؤال واحد", "سؤالان", "أسئلة", "سؤالاً") + " للاختبار"
+        + (" · 🃏 " + _count(added, "بطاقة واحدة", "بطاقتان", "بطاقات", "بطاقة") + " للمراجعة اليومية" if added else "")]
+    markup = botkit.lecture_keyboard(lid, lectures[lid])
+    if pdf_path:
+        with open(pdf_path, "rb") as fh:
+            sent = await context.bot.send_document(chat_id, fh, filename=pdf_path.name,
+                                                   caption="\n".join(caption)[:1000], reply_markup=markup)
+    else:
+        sent = await context.bot.send_document(chat_id, full["pdf_file_id"], caption="\n".join(caption)[:1000],
+                                               reply_markup=markup)
+    if sent.document:
+        lectures[lid]["pdf_file_id"] = full["pdf_file_id"] = sent.document.file_id
+    await bot_share.auto_share(context, user_id, lid)
+    return lid
+
+
+async def _download_extras(context, chat_id: int, images_meta: list, docs_meta: list) -> tuple[list, list]:
+    images = []
+    for m in images_meta:
+        f = await context.bot.get_file(m["file_id"], **BIG_FILE_TIMEOUTS)
+        images.append((bytes(await f.download_as_bytearray()), m["mime"]))
+    mats = []
+    for d in docs_meta:
+        f = await context.bot.get_file(d["file_id"], **BIG_FILE_TIMEOUTS)
+        data = bytes(await f.download_as_bytearray())
+        _drop_local_copy(f.file_path)
+        try:
+            mats.append(await asyncio.to_thread(materials.load, data, d["name"], d["mime"]))
+        except Exception:
+            log.exception("could not read %s", d["name"])
+            await context.bot.send_message(chat_id, f"⚠️ لم أستطع قراءة الملف {d['name']}، سأكمل بدونه.")
+    return images, mats
+
+
+async def _clear_collector(context, chat_id: int, user_id: int) -> None:
+    for job in context.job_queue.get_jobs_by_name(f"start:{user_id}"):
+        job.schedule_removal()
+    collector = context.user_data.pop("collector_msg", None)
+    if collector:
+        try:
+            await context.bot.delete_message(chat_id, collector)
+        except TelegramError:
+            pass
+
+
 async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
     global _waiting
     ud = context.user_data
     parts = ud.pop("parts", [])
     if not parts:
         return
-    if not await bot_growth.can_process(context, chat_id, ud):
-        return
-    for job in context.job_queue.get_jobs_by_name(f"start:{user_id}"):
-        job.schedule_removal()
-    collector = ud.pop("collector_msg", None)
-    if collector:
+    await _clear_collector(context, chat_id, user_id)
+    compare = ud.pop("compare_next", False) and botkit.is_owner(context, user_id)
+
+    # The same recording was processed before (for anyone): reuse it.
+    key = cache.key_for(parts)
+    cached = None if compare else cache.get(key)
+    if cached and cached.get("pdf_file_id"):
+        ud.pop("pending_images", None)
+        ud.pop("pending_docs", None)
         try:
-            await context.bot.delete_message(chat_id, collector)
-        except TelegramError:
-            pass
+            await _save_and_send(context, chat_id, user_id, cached, note="⚡ وصلتك فوراً: سبق تلخيص هذه المحاضرة.")
+            return
+        except TelegramError as e:
+            log.warning("cached delivery failed, processing again: %s", e)
+
+    if not compare and not await bot_growth.can_process(context, chat_id, ud):
+        return
     images_meta = _fresh(ud.pop("pending_images", []))
     docs_meta = _fresh(ud.pop("pending_docs", []))
     major = ud.get("major")
@@ -385,20 +471,10 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
                         "⚠️ تعذّر تنزيل الرابط. تأكد أنه عام (في Google Drive: مشاركة ← أي شخص لديه الرابط)."
                         if p.get("url") else "⚠️ تعذّر تنزيل الملف من تيليجرام. أعد إرساله بعد قليل.")
                     return
-            images = []
-            for m in images_meta:
-                f = await context.bot.get_file(m["file_id"], **BIG_FILE_TIMEOUTS)
-                images.append((bytes(await f.download_as_bytearray()), m["mime"]))
-            mats = []
-            for d in docs_meta:
-                f = await context.bot.get_file(d["file_id"], **BIG_FILE_TIMEOUTS)
-                data = bytes(await f.download_as_bytearray())
-                _drop_local_copy(f.file_path)
-                try:
-                    mats.append(await asyncio.to_thread(materials.load, data, d["name"], d["mime"]))
-                except Exception:
-                    log.exception("could not read %s", d["name"])
-                    await context.bot.send_message(chat_id, f"⚠️ لم أستطع قراءة الملف {d['name']}، سأكمل بدونه.")
+            images, mats = await _download_extras(context, chat_id, images_meta, docs_meta)
+            if compare:
+                await bot_growth.run_compare(context, chat_id, status, sources, work, major, images, mats)
+                return
 
             duration = sum(s.duration or pipeline.probe_duration(s.path) for s in sources)
             eta = pipeline.estimate_seconds(duration)
@@ -414,37 +490,12 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
             async with sender.lock:
                 pass
 
-        lid = uuid.uuid4().hex[:8]
-        a = result.analysis
-        full = {key: a.get(key, []) for key in ("mcq", "true_false", "essay", "flashcards", "sections", "glossary",
-                                                "divisions", "comparisons")}
-        full.update(title=a.get("title", ""), subject=a.get("subject", ""), overview=a.get("overview", ""),
-                    transcript=result.transcript_text, time=time.time(), ndiv=len(a.get("divisions", [])),
-                    duration=result.extra.get("duration", 0), source_url=result.source.url or "")
-        store.put(user_id, ud, lid, full)
-        lectures = ud["lectures"]
-        for old in sorted(lectures, key=lambda k: lectures[k]["time"])[:-KEEP_LECTURES]:
-            store.remove(user_id, ud, old)
-        cid = library.assign_course(ud, lid, full["subject"])
-        added = study.add_cards(ud.setdefault("deck", []), a.get("flashcards", []), a.get("title", ""))
-        ud.setdefault("reminder_hour", config.DEFAULT_REMINDER_HOUR)
-        bot_growth.lecture_done(ud, full)
-
         await status.delete()
         if not sender.count:  # the sections were not streamed: send the outline first
-            await context.bot.send_message(chat_id, _quick_summary(a, False), parse_mode=ParseMode.HTML)
-        n_questions = len(full["mcq"]) + len(full["true_false"]) + len(full["essay"])
-        caption = [f"✅ {a.get('title', 'ملخص المحاضرة')}",
-                   f"📁 حُفظت في مادة «{library.courses(ud)[cid]['name']}»",
-                   "🧪 " + _count(n_questions, "سؤال واحد", "سؤالان", "أسئلة", "سؤالاً") + " للاختبار"
-                   + (" · 🃏 " + _count(added, "بطاقة واحدة", "بطاقتان", "بطاقات", "بطاقة") + " للمراجعة اليومية"
-                      if added else "")]
-        with open(result.pdf_path, "rb") as fh:
-            sent = await context.bot.send_document(chat_id, fh, filename=result.pdf_path.name,
-                                                   caption="\n".join(caption)[:1000],
-                                                   reply_markup=botkit.lecture_keyboard(lid, lectures[lid]))
-        if sent.document:
-            lectures[lid]["pdf_file_id"] = sent.document.file_id
+            await context.bot.send_message(chat_id, _quick_summary(result.analysis, False), parse_mode=ParseMode.HTML)
+        full = _full_from(result)
+        lid = await _save_and_send(context, chat_id, user_id, full, result.pdf_path)
+        cache.put(key, dict(full, pdf_file_id=ud["lectures"][lid].get("pdf_file_id")))
     except pipeline.LectureTooLong:
         await status.edit_text(f"⚠️ المحاضرة أطول من {config.MAX_LECTURE_MINUTES} دقيقة. قسّمها وأرسلها على دفعات.")
     except AnalysisError as e:
@@ -457,6 +508,43 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
         if queued:  # cancelled while still waiting in the queue
             _waiting -= 1
         shutil.rmtree(work, ignore_errors=True)  # the recording never stays on the server
+
+
+async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
+    """A lecture without a recording: summarise its slides, files or photos of book pages."""
+    ud = context.user_data
+    images_meta = _fresh(ud.pop("pending_images", []))
+    docs_meta = _fresh(ud.pop("pending_docs", []))
+    if not images_meta and not docs_meta:
+        return
+    await _clear_collector(context, chat_id, user_id)
+    if not await bot_growth.can_process(context, chat_id, ud):
+        return
+    status = await context.bot.send_message(chat_id, "📄 أقرأ الملفات وأكتب الملخص والأسئلة… (دقيقتان تقريباً)")
+    work = Path(tempfile.mkdtemp(prefix="files_", dir=_work_root()))
+    try:
+        images, mats = await _download_extras(context, chat_id, images_meta, docs_meta)
+        if not images and not mats:
+            await status.edit_text("⚠️ لم أستطع قراءة الملفات. أرسلها بصيغة PDF أو PowerPoint أو صور.")
+            return
+        title = Path(docs_meta[0]["name"]).stem if docs_meta else ""
+        loop = asyncio.get_running_loop()
+        sender = SectionSender(context.bot, chat_id, loop)
+        await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        result = await asyncio.to_thread(pipeline.run_files, work, title, ud.get("major"), images, mats, None, sender)
+        await asyncio.sleep(1)
+        async with sender.lock:
+            pass
+        await status.delete()
+        await _save_and_send(context, chat_id, user_id, _full_from(result), result.pdf_path)
+    except AnalysisError as e:
+        log.warning("files analysis failed: %s", e)
+        await status.edit_text("⚠️ تعذّر كتابة الملخص هذه المرة. أعد المحاولة بعد قليل.")
+    except Exception:
+        log.exception("files job failed")
+        await status.edit_text("⚠️ حدث خطأ أثناء قراءة الملفات. أعد المحاولة.")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------- buttons ----------
@@ -477,6 +565,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if action == "go":
         await _run_job(context, chat_id, update.effective_user.id)
+        return
+    if action == "files":
+        try:
+            await q.edit_message_reply_markup(None)
+        except BadRequest:
+            pass
+        await _run_files_job(context, chat_id, update.effective_user.id)
         return
     if action == "cancel":
         context.user_data.pop("parts", None)
