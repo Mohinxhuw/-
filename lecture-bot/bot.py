@@ -24,6 +24,7 @@ from botkit import count as _count, hour_name as _hour_name, keyboard as _keyboa
 from botkit import send_long as _send_long, work_root as _work_root
 from lecturebot import cache, config, library, materials, mindmap, pipeline, store, study
 from lecturebot.analyze import MAJOR_NAMES, AnalysisError
+from lecturebot import media
 from lecturebot.media import Source, download_url, find_media_url
 
 logging.basicConfig(level=logging.DEBUG if config.DEBUG else logging.INFO,
@@ -488,6 +489,8 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
                     await bot_growth.tell_owner(context, f"⚠️ تعذّر تنزيل {'رابط' if p.get('url') else 'ملف'} "
                                                          f"لطالب ({user_id}):\n{p.get('url', '')}\n{str(e)[:600]}")
                     await status.edit_text(
+                        "⚠️ تعذّر تنزيل فيديو يوتيوب الآن. أعد المحاولة بعد قليل، أو أرسل صوت المحاضرة ملفاً."
+                        if media.is_youtube(p.get("url", "")) else
                         "⚠️ تعذّر تنزيل الرابط. تأكد أنه عام (في Google Drive: مشاركة ← أي شخص لديه الرابط)."
                         if p.get("url") else "⚠️ تعذّر تنزيل الملف من تيليجرام. أعد إرساله بعد قليل.")
                     return
