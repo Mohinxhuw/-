@@ -18,6 +18,7 @@ import bot_growth
 import bot_library
 import bot_quiz
 import bot_share
+import bot_wallet
 import botkit
 from botkit import count as _count, hour_name as _hour_name, keyboard as _keyboard, minutes as _minutes
 from botkit import send_long as _send_long, work_root as _work_root
@@ -64,6 +65,7 @@ COMMANDS = [
     ("exam", "ملخص ليلة الاختبار"),
     ("search", "البحث في محاضراتي"),
     ("groups", "مجموعات الدراسة"),
+    ("wallet", "محفظتي والأسعار"),
     ("invite", "ادعُ أصدقاءك"),
     ("stats", "إحصاءاتي"),
     ("major", "تخصصي"),
@@ -71,6 +73,7 @@ COMMANDS = [
     ("teacher", "نسخة المعلم"),
     ("privacy", "الخصوصية"),
     ("delete", "حذف بياناتي"),
+    ("paysupport", "الدعم ومشكلات الدفع"),
 ]
 
 PRIVACY = (
@@ -430,15 +433,20 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
     key = cache.key_for(parts)
     cached = None if compare else cache.get(key)
     if cached and cached.get("pdf_file_id"):
+        if not await bot_wallet.require(context, chat_id, ud, bot_wallet.RECEIVE, "هذه المحاضرة (سبق تلخيصها)"):
+            ud["parts"] = parts  # kept, so "▶️ أكمل" after topping up carries on
+            return
         ud.pop("pending_images", None)
         ud.pop("pending_docs", None)
         try:
             await _save_and_send(context, chat_id, user_id, cached, note="⚡ وصلتك فوراً: سبق تلخيص هذه المحاضرة.")
+            bot_wallet.charge(context, ud, bot_wallet.RECEIVE, "محاضرة سبق تلخيصها")
             return
         except TelegramError as e:
             log.warning("cached delivery failed, processing again: %s", e)
 
-    if not compare and not await bot_growth.can_process(context, chat_id, ud):
+    if not compare and not await bot_wallet.can_start(context, chat_id, ud):
+        ud["parts"] = parts
         return
     images_meta = _fresh(ud.pop("pending_images", []))
     docs_meta = _fresh(ud.pop("pending_docs", []))
@@ -477,6 +485,11 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
                 return
 
             duration = sum(s.duration or pipeline.probe_duration(s.path) for s in sources)
+            price, _ = bot_wallet.upload_cost(ud, duration)
+            if not await bot_wallet.require(context, chat_id, ud, price, f"محاضرة {_minutes(duration)}"):
+                ud.update(parts=parts, pending_images=images_meta, pending_docs=docs_meta)
+                await status.delete()
+                return
             eta = pipeline.estimate_seconds(duration)
             await status.edit_text(f"🎧 بدأت العمل على المحاضرة ({_minutes(duration)}).\n"
                                    f"⏱ الوقت المتوقع: {_minutes(eta)}")
@@ -495,6 +508,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
             await context.bot.send_message(chat_id, _quick_summary(result.analysis, False), parse_mode=ParseMode.HTML)
         full = _full_from(result)
         lid = await _save_and_send(context, chat_id, user_id, full, result.pdf_path)
+        bot_wallet.charge_upload(context, ud, duration)
         cache.put(key, dict(full, pdf_file_id=ud["lectures"][lid].get("pdf_file_id")))
     except pipeline.LectureTooLong:
         await status.edit_text(f"⚠️ المحاضرة أطول من {config.MAX_LECTURE_MINUTES} دقيقة. قسّمها وأرسلها على دفعات.")
@@ -518,7 +532,8 @@ async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
     if not images_meta and not docs_meta:
         return
     await _clear_collector(context, chat_id, user_id)
-    if not await bot_growth.can_process(context, chat_id, ud):
+    if not await bot_wallet.require(context, chat_id, ud, bot_wallet.FILES, "ملخص الملفات"):
+        ud.update(pending_images=images_meta, pending_docs=docs_meta)
         return
     status = await context.bot.send_message(chat_id, "📄 أقرأ الملفات وأكتب الملخص والأسئلة… (دقيقتان تقريباً)")
     work = Path(tempfile.mkdtemp(prefix="files_", dir=_work_root()))
@@ -537,6 +552,7 @@ async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
             pass
         await status.delete()
         await _save_and_send(context, chat_id, user_id, _full_from(result), result.pdf_path)
+        bot_wallet.charge(context, ud, bot_wallet.FILES, "ملخص من الملفات")
     except AnalysisError as e:
         log.warning("files analysis failed: %s", e)
         await status.edit_text("⚠️ تعذّر كتابة الملخص هذه المرة. أعد المحاولة بعد قليل.")
@@ -632,9 +648,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if extra:
             i = int(extra)
             if i < len(sections):
+                if not await bot_wallet.require(context, chat_id, context.user_data, bot_wallet.EXPLAIN, "الشرح المبسط"):
+                    return
                 await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
                 try:
                     text = await asyncio.to_thread(study.explain, lec, sections[i])
+                    bot_wallet.charge(context, context.user_data, bot_wallet.EXPLAIN, "شرح مبسط")
                 except AnalysisError as e:
                     log.warning("explain failed: %s", e)
                     text = "⚠️ تعذّر الشرح الآن. حاول بعد قليل."
@@ -817,7 +836,7 @@ def setup(app: Application) -> None:
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
-    for module in (bot_library, bot_share, bot_growth, bot_quiz):
+    for module in (bot_library, bot_share, bot_growth, bot_quiz, bot_wallet):
         module.register(app)
     app.add_handler(PollAnswerHandler(bot_growth.on_poll_answer))
     app.add_error_handler(on_error)

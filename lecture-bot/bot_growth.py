@@ -1,7 +1,7 @@
-"""Growth: statistics, invite links and credits, the free trial, and the teacher version.
+"""Growth: statistics, invite links, the free hour, and the teacher version.
 
-Credits are tracked from day one but only enforced when BILLING_ENABLED is on (when paid plans start):
-every new student gets FREE_LECTURES, and every REFERRALS_PER_CREDIT friends they bring earn one more.
+Every new student gets an hour of free recordings, and every REFERRALS_PER_CREDIT friends they bring
+add Stars to their wallet (see bot_wallet).
 """
 import asyncio
 import datetime as dt
@@ -18,6 +18,7 @@ from telegram.error import TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
 import botkit
+import bot_wallet
 from botkit import button, log
 from lecturebot import analyze, config, exports, library, pipeline, render, study
 
@@ -35,11 +36,10 @@ def _stats(ud: dict) -> dict:
                                    "review_days": []})
 
 
-# ---------- credits and referrals ----------
+# ---------- the free hour and referrals ----------
 
 def welcome_credits(ud: dict) -> None:
-    if "credits" not in ud:
-        ud["credits"] = config.FREE_LECTURES
+    bot_wallet.welcome(ud)
 
 
 async def referred(context, referrer: int, new_user: int) -> None:
@@ -53,36 +53,23 @@ async def referred(context, referrer: int, new_user: int) -> None:
     refs.append(new_user)
     earned = len(refs) % config.REFERRALS_PER_CREDIT == 0
     if earned:
-        ref_ud["credits"] = ref_ud.get("credits", 0) + 1
+        bot_wallet.credit(ref_ud, bot_wallet.REFERRAL, "دعوة أصدقاء")
     context.application.mark_data_for_update_persistence(user_ids=[referrer])
     try:
         text = "🎉 انضم صديق جديد إلى فَهيم من رابطك!"
         if earned:
-            text += " وحصلت على محاضرة مجانية 🎁"
+            text += f" وأُضيف لرصيدك ⭐ {bot_wallet.REFERRAL} 🎁"
         else:
-            text += " صديق واحد آخر وتحصل على محاضرة مجانية 🎁"
+            text += f" صديق واحد آخر ويُضاف لرصيدك ⭐ {bot_wallet.REFERRAL} 🎁"
         await context.bot.send_message(referrer, text)
     except TelegramError:
         pass
-
-
-async def can_process(context, chat_id: int, ud: dict) -> bool:
-    """With billing on, a lecture needs a credit. Without it, everyone can use the bot freely."""
-    if not config.BILLING_ENABLED or ud.get("credits", 0) > 0:
-        return True
-    link = f"https://t.me/{context.bot.username}?start=r_{chat_id}"
-    await context.bot.send_message(
-        chat_id, "🎁 انتهى رصيدك من المحاضرات المجانية.\nادعُ صديقين بهذا الرابط، وتحصل على محاضرة مجانية لكل صديقين:\n"
-                 f"{link}", disable_web_page_preview=True)
-    return False
 
 
 def lecture_done(ud: dict, full: dict) -> None:
     s = _stats(ud)
     s["lectures"] += 1
     s["seconds"] += int(full.get("duration") or 0)
-    if config.BILLING_ENABLED:
-        ud["credits"] = max(0, ud.get("credits", 0) - 1)
 
 
 def reviewed(ud: dict) -> None:
@@ -106,11 +93,11 @@ async def invite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     link = f"https://t.me/{context.bot.username}?start=r_{update.effective_user.id}"
     refs = len(ud.get("refs", []))
     to_next = config.REFERRALS_PER_CREDIT - refs % config.REFERRALS_PER_CREDIT
-    note = "" if config.BILLING_ENABLED else "\n(فَهيم مجاني حالياً؛ يُستخدم رصيدك عند إطلاق الاشتراكات)"
     await update.effective_message.reply_text(
-        f"🎁 <b>ادعُ أصدقاءك</b>\nكل {_friends(config.REFERRALS_PER_CREDIT)} ينضمون من رابطك = محاضرة مجانية.\n\n{link}\n\n"
-        f"👥 انضم من رابطك: {refs}\n🎟 رصيدك: {ud.get('credits', 0)} محاضرة\n"
-        f"⏭ باقي {_friends(to_next)} للمحاضرة المجانية التالية{note}",
+        f"🎁 <b>ادعُ أصدقاءك</b>\nكل {_friends(config.REFERRALS_PER_CREDIT)} ينضمون من رابطك = ⭐ {bot_wallet.REFERRAL} "
+        f"في محفظتك.\n\n{link}\n\n"
+        f"👥 انضم من رابطك: {refs}\n👛 رصيدك: ⭐ {bot_wallet.balance(ud)}\n"
+        f"⏭ باقي {_friends(to_next)} للهدية التالية",
         parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
@@ -320,11 +307,14 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     context.user_data["compare_next"] = True
     await update.effective_message.reply_text(
         "🔬 أرسل الآن تسجيل محاضرة (مع شرائحها إن أردت). سأحوّلها إلى نص مرة واحدة، ثم أكتب ملخصها وأسئلتها "
-        "بنموذجين: Opus وSonnet، وأرسل لك الملفين مع تكلفة كل واحد لتقارن.\n"
+        "مرتين: بـ Opus كاملاً، وبالطريقة المختلطة (Opus للملخص، وSonnet للأسئلة ثم يراجعها Opus)، "
+        "وأرسل لك الملفين مع تكلفة كل واحد لتقارن.\n"
         "💡 محاضرة من 20 إلى 30 دقيقة تكفي للمقارنة وتوفّر التكلفة.")
 
 
-COMPARE_MODELS = (("Opus", "claude-opus-5-5"), ("Sonnet", "claude-sonnet-5-5"))
+# (label, notes model, questions model): everything by Opus, or the mixed setup the bot uses.
+COMPARE_MODELS = (("Opus", "claude-opus-5-5", "claude-opus-5-5"),
+                  ("مختلط", "claude-opus-5-5", "claude-sonnet-5-5"))
 GROQ_DOLLARS_PER_HOUR = 0.111
 
 
@@ -334,14 +324,14 @@ async def run_compare(context, chat_id: int, status, sources, work, major, image
     segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats)
     await status.edit_text("🔬 مقارنة: يكتب النموذجان الملخص والأسئلة في الوقت نفسه… (دقائق)")
 
-    async def one(label, model):
+    async def one(label, model, questions_model):
         started = time.time()
         result = await asyncio.to_thread(analyze.analyze, segments, major=major, images=images, duration=duration,
-                                         materials=mats, parts=parts, model=model)
+                                         materials=mats, parts=parts, model=model, questions_model=questions_model)
         res = await asyncio.to_thread(pipeline.finish, result, segments, work, sources[0], duration, f"-{label}")
         return label, res, time.time() - started
 
-    outcomes = await asyncio.gather(*(one(label, model) for label, model in COMPARE_MODELS), return_exceptions=True)
+    outcomes = await asyncio.gather(*(one(*m) for m in COMPARE_MODELS), return_exceptions=True)
     await status.delete()
     hours = max(duration / 3600, 0.01)
     lines = [f"🔬 <b>نتيجة المقارنة</b> · محاضرة {botkit.minutes(duration)}", ""]
@@ -352,9 +342,10 @@ async def run_compare(context, chat_id: int, status, sources, work, major, image
             continue
         label, res, seconds = outcome
         a, u = res.analysis, res.analysis.get("_usage", {})
+        dropped = f" · حذفت المراجعة {a['_dropped_by_review']} سؤالاً" if a.get("_dropped_by_review") else ""
         counts = (f"{len(a.get('sections', []))} قسماً · {len(a.get('mcq', []))} اختيار · {len(a.get('true_false', []))} "
                   f"صح/خطأ · {len(a.get('essay', []))} مقالي · {len(a.get('flashcards', []))} بطاقة · "
-                  f"{len(a.get('divisions', []))} تقسيم")
+                  f"{len(a.get('divisions', []))} تقسيم{dropped}")
         with open(res.pdf_path, "rb") as fh:
             await context.bot.send_document(chat_id, fh, filename=res.pdf_path.name,
                                             caption=f"🔬 {label}: ${u.get('cost', 0):.2f} لهذه المحاضرة\n{counts}")

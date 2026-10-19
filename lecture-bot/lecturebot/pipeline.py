@@ -82,7 +82,8 @@ def run(source: Source | list[Source], out_dir: Path, major: str | None = None,
         result = analyzer(segments, major=major, images=images, duration=duration)
     else:
         result = analyze.analyze(segments, major=major, images=images, duration=duration, materials=materials,
-                                 parts=parts, on_section=on_section, model=model)
+                                 parts=parts, on_section=on_section, model=model,
+                                 questions_model=config.QUESTIONS_MODEL)
     first = sources[0] if len(sources) == 1 else Source(path=sources[0].path, title="")
     return finish(result, segments, out_dir, first, duration, on_stage=stage)
 
@@ -93,7 +94,8 @@ def run_files(out_dir: Path, title: str, major: str | None = None, images: list[
     stage = on_stage or (lambda *_: None)
     materials = materials or []
     stage("analyze", 0.0)
-    result = analyze.analyze([], major=major, images=images, materials=materials, on_section=on_section, model=model)
+    result = analyze.analyze([], major=major, images=images, materials=materials, on_section=on_section, model=model,
+                             questions_model=config.QUESTIONS_MODEL)
     res = finish(result, [], out_dir, Source(path=Path(title or "lecture"), title=title), 0.0, on_stage=stage)
     # The files' text stands in for the transcript (search and explanations use it).
     res.transcript_text = "\n\n".join(m.text for m in materials if m.text)

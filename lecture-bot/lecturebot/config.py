@@ -24,6 +24,11 @@ TELEGRAM_LOCAL_API_URL = os.environ.get("TELEGRAM_LOCAL_API_URL", "").rstrip("/"
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 # High effort: accuracy of the notes and questions comes first.
 CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
+# The practice questions are written by a cheaper model, then checked by CLAUDE_MODEL before students see
+# them. Set QUESTIONS_MODEL to the same model as CLAUDE_MODEL to write everything with it (no review step then).
+QUESTIONS_MODEL = os.environ.get("QUESTIONS_MODEL", "claude-sonnet-5-5")
+REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "medium")
+REVIEW_ALWAYS = _bool("REVIEW_ALWAYS")
 
 # Fast transcription service (Groq). When a key is set it is used first, with the local model as fallback.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
@@ -61,10 +66,9 @@ REMINDER_TZ = os.environ.get("REMINDER_TZ", "Asia/Riyadh")
 DEFAULT_REMINDER_HOUR = int(os.environ.get("DEFAULT_REMINDER_HOUR", "20"))
 REVIEW_CARDS_PER_DAY = int(os.environ.get("REVIEW_CARDS_PER_DAY", "25"))
 
-# Credits: tracked from the start, enforced only once paid plans begin (BILLING_ENABLED=true).
+# The Stars wallet: charging starts when BILLING_ENABLED=true (or the owner sends /billing on).
 BILLING_ENABLED = _bool("BILLING_ENABLED")
-FREE_LECTURES = int(os.environ.get("FREE_LECTURES", "1"))          # free trial for every new student
-REFERRALS_PER_CREDIT = int(os.environ.get("REFERRALS_PER_CREDIT", "2"))  # friends invited per free lecture
+REFERRALS_PER_CREDIT = int(os.environ.get("REFERRALS_PER_CREDIT", "2"))  # friends invited per referral reward
 
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/tmp/lecturebot"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))

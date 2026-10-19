@@ -158,6 +158,26 @@ class AnalysisError(Exception):
     pass
 
 
+REVIEW_SCHEMA = _obj({"verdicts": {"type": "array", "items": _obj({
+    "kind": {"type": "string", "enum": ["mcq", "true_false", "essay", "flashcards"]},
+    "index": {"type": "integer"}, "keep": {"type": "boolean"}, "reason": _S})}})
+
+REVIEW_SYSTEM = """You are the final check on practice questions written for a recorded Arabic university \
+lecture, before students see them. You get the lecture's outline and each question with the quote from \
+the lecture that is meant to support its answer.
+
+Give a verdict for every item. keep is false when any of these is true:
+- the wording is unclear, ungrammatical or could be read in more than one way;
+- the marked answer is not clearly correct according to the quote, or another option could also be \
+defended as correct;
+- for a true/false statement, it is not definitely true or definitely false;
+- it asks about a side remark, a joke, an example of no importance, or something the outline shows \
+is not part of the lecture's content;
+- it repeats another item.
+Otherwise keep is true. reason: a few words. Judge strictly: it is better to drop a doubtful question \
+than to show a wrong one."""
+
+
 def cost_of(usage, model: str) -> dict:
     """Tokens and dollars of one response (priced by the model that actually answered)."""
     p_in, p_out, p_read, p_write = PRICES.get(model, PRICES["claude-opus-5-5"])
@@ -248,8 +268,10 @@ def _call(system: str, content: list[dict], schema: dict, on_text=None, model: s
 
 def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
             duration: float = 0.0, materials: list | None = None, parts: list[tuple[float, str]] | None = None,
-            on_section=None, model: str | None = None) -> dict:
+            on_section=None, model: str | None = None, questions_model: str | None = None) -> dict:
     """Return the study material (all PROPS keys), plus "_usage": tokens and dollars spent.
+
+    model writes the notes and reviews the questions; questions_model writes the questions.
 
     materials: lecture files (lecturebot.materials.Material). parts: (start_seconds, title) of each
     recording when several were joined. on_section(section) is called as each summary section is written.
@@ -261,7 +283,7 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
 
     def ask_questions():
         try:
-            data, u = _call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA, model=model)
+            data, u = _call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA, model=questions_model or model)
             questions.update(data)
             questions["_q_usage"] = u
         except Exception as e:  # reported after the notes are done
@@ -279,8 +301,44 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     result.update(questions)
     source_text = _transcript_text(segments) + "\n" + "\n".join(m.text for m in (materials or []) if m.text)
     _clean(result, source_text)
+    if (questions_model or model) != (model or config.CLAUDE_MODEL) or config.REVIEW_ALWAYS:
+        add_usage(usage, _review(result, model))
     result["_usage"] = usage
     return result
+
+
+def _review(result: dict, model: str | None) -> dict:
+    """Let the notes model check the questions written by the (cheaper) questions model; drop the doubtful ones."""
+    items = {"mcq": [{"question": q["question"], "options": q["options"], "answer": q["options"][q["answer_index"]],
+                      "quote": q.get("evidence", "")} for q in result.get("mcq", [])],
+             "true_false": [{"statement": t["statement"], "answer": t["answer"], "quote": t.get("evidence", "")}
+                            for t in result.get("true_false", [])],
+             "essay": [{"question": e["question"], "model_answer": e["model_answer"], "quote": e.get("evidence", "")}
+                       for e in result.get("essay", [])],
+             "flashcards": [{"front": c["front"], "back": c["back"]} for c in result.get("flashcards", [])]}
+    outline = [{"heading": s.get("heading", ""), "points": [p.get("text", "") for p in s.get("points", [])]}
+               for s in result.get("sections", [])]
+    payload = {"outline": outline, "items": {k: [dict(v, index=i) for i, v in enumerate(vs)] for k, vs in items.items()}}
+    client = anthropic.Anthropic()
+    try:
+        message = client.beta.messages.create(
+            model=model or config.CLAUDE_MODEL, max_tokens=16000, system=REVIEW_SYSTEM,
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            output_config={"effort": config.REVIEW_EFFORT, "format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
+        )
+        if message.stop_reason != "end_turn":
+            return {}
+        verdicts = json.loads("".join(b.text for b in message.content if b.type == "text"))["verdicts"]
+    except (anthropic.APIError, json.JSONDecodeError, KeyError) as e:  # the review is a safety net, not a must
+        import logging
+        logging.getLogger(__name__).warning("question review skipped: %s", e)
+        return {}
+    drop = {(v["kind"], v["index"]) for v in verdicts if not v.get("keep", True)}
+    for kind in ("mcq", "true_false", "essay", "flashcards"):
+        result[kind] = [item for i, item in enumerate(result.get(kind, [])) if (kind, i) not in drop]
+    result["_dropped_by_review"] = len(drop)
+    return cost_of(message.usage, getattr(message, "model", None) or model or config.CLAUDE_MODEL)
 
 
 class _SectionStream:

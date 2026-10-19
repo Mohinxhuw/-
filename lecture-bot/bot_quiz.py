@@ -8,6 +8,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 
 import botkit
+import bot_wallet
 from botkit import button, log
 from lecturebot import library, store, study
 from lecturebot.analyze import AnalysisError
@@ -112,6 +113,11 @@ async def input_essay_answer(update: Update, context, payload: str) -> None:
         return
     i = int(i)
     q = lec["essay"][i]
+    graded = ud.setdefault("essays_graded", {})
+    price = bot_wallet.ESSAY if graded.get(lid, 0) >= bot_wallet.ESSAY_FREE else 0
+    if not await bot_wallet.require(context, msg.chat_id, ud, price, "تصحيح إجابة مقالية"):
+        botkit.expect(ud, "essay_answer", payload)
+        return
     await context.bot.send_chat_action(msg.chat_id, ChatAction.TYPING)
     try:
         g = await asyncio.to_thread(study.grade_essay, q, msg.text)
@@ -120,6 +126,8 @@ async def input_essay_answer(update: Update, context, payload: str) -> None:
         botkit.expect(ud, "essay_answer", payload)
         await msg.reply_text("⚠️ تعذّر تصحيح إجابتك الآن. أرسلها مرة أخرى بعد قليل.")
         return
+    graded[lid] = graded.get(lid, 0) + 1
+    bot_wallet.charge(context, ud, price, "تصحيح إجابة مقالية")
     stats = ud.setdefault("stats", {})
     stats["essays"] = stats.get("essays", 0) + 1
     stats["essay_points"] = stats.get("essay_points", 0) + g["score"]

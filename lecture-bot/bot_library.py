@@ -13,6 +13,7 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
 import botkit
+import bot_wallet
 from botkit import button, log
 from lecturebot import config, library, pipeline, render, store, study
 from lecturebot.analyze import AnalysisError
@@ -258,6 +259,8 @@ async def generate_exam(update: Update, context, lids: list[str]) -> None:
     if not chosen:
         await context.bot.send_message(chat, "لا توجد محاضرات جاهزة لهذا الملخص. أرسل محاضرات المادة أولاً.")
         return
+    if not await bot_wallet.require(context, chat, ud, bot_wallet.EXAM, "ملخص ليلة الاختبار"):
+        return
     status = await context.bot.send_message(chat, f"🌙 أجهّز ملخص ليلة الاختبار من {_lectures(len(chosen))}…")
     work = Path(tempfile.mkdtemp(prefix="exam_", dir=botkit.work_root()))
     try:
@@ -270,6 +273,7 @@ async def generate_exam(update: Update, context, lids: list[str]) -> None:
             await context.bot.send_document(chat, fh, filename=pdf.name,
                                             caption="🌙 ملخص ليلة الاختبار: أهم الأفكار، وما يجب حفظه، "
                                                     "ونقاط يخلط فيها الطلاب، واختبر نفسك. بالتوفيق!")
+        bot_wallet.charge(context, ud, bot_wallet.EXAM, "ملخص ليلة الاختبار")
     except AnalysisError as e:
         log.warning("exam summary failed: %s", e)
         await status.edit_text("⚠️ تعذّر تجهيز الملخص الآن. حاول بعد قليل.")

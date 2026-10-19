@@ -70,7 +70,7 @@ class FakeTelegram(BaseRequest):
             r = dict(msg, poll={"id": pid, "question": "q", "options": [], "total_voter_count": 0, "is_closed": False,
                                 "is_anonymous": False, "type": "quiz", "allows_multiple_answers": False,
                                 "allows_revoting": False, "members_only": False})
-        elif name in ("sendMessage", "editMessageText"):
+        elif name in ("sendMessage", "editMessageText", "sendInvoice"):
             r = msg
         elif name == "getFile":
             r = {"file_id": "f", "file_unique_id": "u", "file_path": "voice/f.ogg"}
@@ -119,6 +119,8 @@ def fake_run_files(work, title, *a):
 
 
 pipeline.run_files = fake_run_files
+DURATION = [3600.0]
+pipeline.probe_duration = lambda path: DURATION[0]
 pipeline.transcribe_sources = lambda sources, major, mats, stage=None: ([], 1200.0, [(0, "")])
 analyze.analyze = lambda segs, **kw: dict(ANALYSIS, _usage={"cost": 0.3 if "opus" in kw["model"] else 0.15,
                                                             "input": 1000, "output": 500})
@@ -128,11 +130,11 @@ study.translate = lambda lec: dict(ANALYSIS, title="Cellular respiration")
 study.exam_summary = lambda lecs: {"title": "ملخص", "overview": "", "topics": [], "must_memorize": [], "pitfalls": [],
                                    "self_test": []}
 
-A, B, T = 7, 8, 9  # two students and a teacher
+A, B, T, C = 7, 8, 9, 10  # three students and a teacher
 
 
 def user(uid):
-    return {"id": uid, "is_bot": False, "first_name": {A: "سارة", B: "خالد", T: "د. أحمد"}[uid]}
+    return {"id": uid, "is_bot": False, "first_name": {A: "سارة", B: "خالد", T: "د. أحمد", C: "نورة"}[uid]}
 
 
 _uid = [0]
@@ -343,8 +345,74 @@ async def main():
         await send(msg(T, voice={"file_id": "v5", "file_unique_id": "c5", "duration": 5}))
         await send(press(T, "go:"))
         await asyncio.sleep(1.5)
-        assert "Opus" in last(T, "نتيجة المقارنة")["text"] and "Sonnet" in last(T, "نتيجة المقارنة")["text"]
+        assert "Opus" in last(T, "نتيجة المقارنة")["text"] and "مختلط" in last(T, "نتيجة المقارنة")["text"]
         last(T, "🔬 Opus: $0.30")
+
+        # the wallet: charging on, the free hour, a top-up with Stars, and per-use charges
+        await send(cmd(T, "/billing on"))
+        assert app.bot_data["billing"] is True
+        await send(cmd(C, "/start"))
+        cu = app.user_data[C]
+        assert cu["free_minutes"] == 60 and cu["free_receives"] == 3
+        await send(msg(C, voice={"file_id": "v6", "file_unique_id": "c6", "duration": 5}))
+        await send(press(C, "go:"))
+        await asyncio.sleep(0.5)
+        assert cu["free_minutes"] == 0 and cu.get("stars", 0) == 0, "the first hour is free"
+        DURATION[0] = 600.0
+        await send(msg(C, voice={"file_id": "v7", "file_unique_id": "c7", "duration": 5}))
+        await send(press(C, "go:"))
+        await asyncio.sleep(0.5)
+        assert "wal:buy:100" in last(C, "اشحن رصيدك")["buttons"] and cu["parts"], "short: offered packs, kept parts"
+        await send(press(C, "wal:buy:250"))
+        assert any(n == "sendInvoice" and ch == C for ch, n, _ in SENT)
+        _uid[0] += 1
+        await send({"update_id": _uid[0], "pre_checkout_query": {
+            "id": "pq1", "from": user(C), "currency": "XTR", "total_amount": 250, "invoice_payload": "pack:250"}})
+        await send(msg(C, successful_payment={"currency": "XTR", "total_amount": 250, "invoice_payload": "pack:250",
+                                              "telegram_payment_charge_id": "ch1", "provider_payment_charge_id": "p1"}))
+        assert cu["stars"] == 275, cu.get("stars")
+        assert "go:" in last(C, "شُحن رصيدك")["buttons"]
+        await send(press(C, "go:"))
+        await asyncio.sleep(0.5)
+        assert cu["stars"] == 275 - 15, cu["stars"]
+        clid = max(cu["lectures"], key=lambda k: cu["lectures"][k]["time"])
+        await send(press(C, f"simp:{clid}:0"))
+        assert cu["stars"] == 260 - 10
+        await send(press(C, f"en:{clid}"))
+        await send(press(C, f"en:{clid}"))
+        assert cu["stars"] == 250 - 30, "English charged once"
+        for _ in range(3):
+            await send(press(C, f"es:{clid}:0:go"))
+            await send(msg(C, text="التحلل ثم كربس"))
+        assert cu["stars"] == 220 - 5, "two free essays, then a paid one"
+        await send(cmd(C, "/exam"))
+        await send(press(C, f"ex:t:{clid}"))
+        await send(press(C, "ex:go:"))
+        assert cu["stars"] == 215 - 50, "exam-night summary"
+
+        # receiving from a classmate: free at first, then 5 Stars with 1 back to the sender, locked when short
+        await send(press(A, f"share:{lid}"))
+        token = last(A, "?start=s_")["text"].split("start=s_")[1].split()[0]
+        n_c = len(cu["lectures"])
+        await send(cmd(C, f"/start s_{token}"))
+        assert len(cu["lectures"]) == n_c + 1 and cu["free_receives"] == 2 and cu["stars"] == 165
+        cu["free_receives"], cu["stars"], a_stars = 0, 3, app.user_data[A].get("stars", 0)
+        await send(cmd(C, f"/start s_{token}"))
+        assert len(cu["lectures"]) == n_c + 1, "locked, not delivered"
+        unl = find_button(C, "unl:")
+        await send(press(C, unl))
+        last(C, "فتح هذه المحاضرة: ⭐ 5")
+        cu["stars"] = 10
+        await send(press(C, unl))
+        assert len(cu["lectures"]) == n_c + 2 and cu["stars"] == 5 and not cu["locked"]
+        assert app.user_data[A]["stars"] == a_stars + 1, "cashback"
+        await send(cmd(C, "/wallet"))
+        last(C, "محفظتك")
+        await send(cmd(C, "/paysupport لم يصلني الرصيد"))
+        last(T, "طلب دعم من نورة")
+        await send(cmd(T, f"/refund {C}"))
+        assert cu["stars"] == 5 - 275 and not cu["payments"]
+        await send(cmd(T, "/billing off"))
 
         # delete everything
         await send(cmd(B, "/delete"))

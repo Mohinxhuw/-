@@ -14,6 +14,7 @@ from telegram.error import TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
 import bot_growth
+import bot_wallet
 import botkit
 from botkit import button, log
 from lecturebot import config, exports, library, pipeline, render, store, study
@@ -41,6 +42,8 @@ async def on_english(update: Update, context, lid: str, lec: dict, extra: str) -
     caption = f"🌐 English version: {lec['title']}"
     if await _resend(context, chat, meta.get("en_file_id"), "doc", caption):
         return
+    if not await bot_wallet.require(context, chat, context.user_data, bot_wallet.ENGLISH, "النسخة الإنجليزية"):
+        return
     status = await context.bot.send_message(chat, "🌐 أترجم الملخص والأسئلة إلى الإنجليزية… (دقيقة أو دقيقتان)")
     work = Path(tempfile.mkdtemp(prefix="en_", dir=botkit.work_root()))
     try:
@@ -54,6 +57,7 @@ async def on_english(update: Update, context, lid: str, lec: dict, extra: str) -
                                                            "(the full transcript stays in the Arabic PDF)")
         if sent.document:
             meta["en_file_id"] = sent.document.file_id
+        bot_wallet.charge(context, context.user_data, bot_wallet.ENGLISH, "النسخة الإنجليزية")
         await status.delete()
     except AnalysisError as e:
         log.warning("translation failed: %s", e)
@@ -116,6 +120,59 @@ async def _deliver(context, to_uid: int, new_lid: str, note: str) -> None:
         await context.bot.send_message(to_uid, note, reply_markup=botkit.lecture_keyboard(new_lid, meta))
 
 
+async def receive(context, from_uid: int, lid: str, to_uid: int, sender_name: str, note: str,
+                  course: str | None = None) -> bool:
+    """Give a classmate's lecture to `to_uid`: free while charging is off or for their first few,
+    otherwise for bot_wallet.RECEIVE Stars (the sender gets bot_wallet.CASHBACK). When their balance is
+    short, they get a notice with an unlock button instead. Returns whether anything reached them."""
+    to_ud = context.application.user_data[to_uid]
+    meta = context.application.user_data.get(from_uid, {}).get("lectures", {}).get(lid)
+    if not meta:
+        return False
+    bot_wallet.welcome(to_ud)
+    free = not bot_wallet.enabled(context) or to_ud.get("free_receives", 0) > 0
+    if not free and bot_wallet.balance(to_ud) < bot_wallet.RECEIVE:
+        token = uuid.uuid4().hex[:8]
+        to_ud.setdefault("locked", {})[token] = {"from": from_uid, "lid": lid, "name": sender_name,
+                                                 "note": note, "course": course, "ts": time.time()}
+        context.application.mark_data_for_update_persistence(user_ids=[to_uid])
+        await context.bot.send_message(
+            to_uid, f"📥 وصلتك محاضرة «{meta['title']}» من {sender_name}.\n"
+                    f"افتحها بـ ⭐ {bot_wallet.RECEIVE} (رصيدك ⭐ {bot_wallet.balance(to_ud)}).",
+            reply_markup=InlineKeyboardMarkup([[button(f"🔓 افتحها (⭐ {bot_wallet.RECEIVE})", f"unl:{token}")]]))
+        return True
+    new_lid = copy_lecture(context, from_uid, lid, to_uid, sender_name, course=course)
+    if not new_lid:
+        return False
+    if bot_wallet.enabled(context):
+        if to_ud.get("free_receives", 0) > 0:
+            to_ud["free_receives"] -= 1
+        else:
+            bot_wallet.charge(context, to_ud, bot_wallet.RECEIVE, f"محاضرة من {sender_name}")
+            bot_wallet.credit(context.application.user_data[from_uid], bot_wallet.CASHBACK, "زميل استلم محاضرتك")
+            context.application.mark_data_for_update_persistence(user_ids=[from_uid])
+    await _deliver(context, to_uid, new_lid, note)
+    return True
+
+
+async def on_unlock(update: Update, context, token: str) -> None:
+    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
+    item = ud.get("locked", {}).get(token)
+    if not item:
+        await context.bot.send_message(chat, "فتحت هذه المحاضرة من قبل، أو لم تعد متاحة. /library")
+        return
+    if not await bot_wallet.require(context, chat, ud, bot_wallet.RECEIVE, "فتح هذه المحاضرة"):
+        return
+    ud["locked"].pop(token)
+    if not await receive(context, item["from"], item["lid"], uid, item["name"], item["note"], item["course"]):
+        await context.bot.send_message(chat, "حذف صاحب المحاضرة هذه المحاضرة، فلم تعد متاحة.")
+        return
+    try:
+        await update.callback_query.edit_message_reply_markup(None)
+    except TelegramError:
+        pass
+
+
 # ---------- share link ----------
 
 async def on_share(update: Update, context, lid: str, lec: dict, extra: str) -> None:
@@ -126,7 +183,7 @@ async def on_share(update: Update, context, lid: str, lec: dict, extra: str) -> 
     await context.bot.send_message(
         update.effective_chat.id,
         f"🔗 أرسل هذا الرابط لزملائك، فيحصل كل من يفتحه على ملخص «{escape(lec['title'])}» وأسئلته وبطاقاته في "
-        f"مكتبته:\n\n{link}\n\n🎁 وكل صديقين جديدين يدخلان من روابطك يمنحانك محاضرة مجانية.",
+        f"مكتبته:\n\n{link}\n\n🎁 وكل زميل يستلمها يضيف ⭐ لرصيدك، وكل صديقين جديدين يضيفان ⭐ {bot_wallet.REFERRAL}.",
         parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
@@ -142,12 +199,11 @@ async def start_shared(update: Update, context, token: str, new: bool) -> bool:
     if new:
         bot_growth.welcome_credits(context.user_data)
         await bot_growth.referred(context, share["uid"], uid)
-    new_lid = copy_lecture(context, share["uid"], share["lid"], uid, share["name"])
-    if not new_lid:
+    title = context.application.user_data.get(share["uid"], {}).get("lectures", {}).get(share["lid"], {}).get("title")
+    if not await receive(context, share["uid"], share["lid"], uid, share["name"],
+                         f"📚 شاركك {share['name']} ملخص «{title}». حفظته في مكتبتك /library"):
         await update.effective_message.reply_text("حذف صاحب المحاضرة هذه المحاضرة، فلم تعد متاحة.")
         return True
-    title = context.user_data["lectures"][new_lid]["title"]
-    await _deliver(context, uid, new_lid, f"📚 شاركك {share['name']} ملخص «{title}». حفظته في مكتبتك /library")
     if new:
         await update.effective_message.reply_text("أهلاً بك في فَهيم 👋 أرسل تسجيل أي محاضرة، وأجهّز لك ملخصها "
                                                   "وأسئلتها. /start لطريقة الاستخدام.")
@@ -264,14 +320,13 @@ async def send_to_group(context, uid: int, lid: str, gid: str) -> int:
         if member == uid:
             continue
         link = context.application.user_data[member].get("group_course", {}).get(gid)
-        new_lid = copy_lecture(context, uid, lid, member, name, course=link)
-        if new_lid:
-            try:
-                await _deliver(context, member, new_lid,
-                               f"👥 {name} شارك في «{g['name']}»: ملخص «{meta['title']}». حفظته في مكتبتك /library")
+        try:
+            if await receive(context, uid, lid, member, name,
+                             f"👥 {name} شارك في «{g['name']}»: ملخص «{meta['title']}». حفظته في مكتبتك /library",
+                             course=link):
                 n += 1
-            except TelegramError as e:
-                log.info("group delivery to %s failed: %s", member, e)
+        except TelegramError as e:
+            log.info("group delivery to %s failed: %s", member, e)
     return n
 
 
@@ -345,6 +400,6 @@ def register(app) -> None:
 
 botkit.LECTURE_BUTTONS.update({"en": on_english, "docx": on_docx, "md": on_markdown,
                                "share": on_share, "tog": on_to_group})
-botkit.BUTTONS.update({"grp": on_group, "gl": on_group_link})
+botkit.BUTTONS.update({"grp": on_group, "gl": on_group_link, "unl": on_unlock})
 botkit.TEXT_INPUTS.update({"group_name": input_group_name})
 botkit.START_LINKS.update({"s": start_shared, "g": start_group})
