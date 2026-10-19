@@ -1,11 +1,14 @@
 """Testing: one "test me" button with every kind of question, and essay answers graded by Claude."""
 import asyncio
 import random
+import time
+import uuid
 from html import escape
 
 from telegram import InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
+from telegram.ext import ContextTypes
 
 import botkit
 import bot_wallet
@@ -42,17 +45,60 @@ async def on_kind(update: Update, context, lid: str, lec: dict, kind: str) -> No
     track = {"kind": "lecture", "uid": update.effective_user.id, "lid": lid}
     polls = []
     if kind in ("mcq", "all"):
-        polls += [(q["question"], q["options"], q["answer_index"], q.get("explanation", ""), q.get("time", ""))
-                  for q in lec.get("mcq", [])]
+        polls += [(q["question"], q["options"], q["answer_index"], q.get("explanation", ""), q.get("time", ""), "m", j)
+                  for j, q in enumerate(lec.get("mcq", []))]
     if kind in ("tf", "all"):
-        polls += [(f"صح أم خطأ؟ {t['statement']}", ["صح", "خطأ"], 0 if t["answer"] else 1, t.get("explanation", ""),
-                   t.get("time", "")) for t in lec.get("true_false", [])]
+        polls += [(_tf(t), ["صح", "خطأ"], 0 if t["answer"] else 1, t.get("explanation", ""), t.get("time", ""), "t", j)
+                  for j, t in enumerate(lec.get("true_false", []))]
     if kind == "all":
         random.shuffle(polls)
-    for i, (question, options, correct, explanation, at) in enumerate(polls, 1):
-        await botkit.send_quiz(context, chat, f"{i}. {question}", options, correct, explanation, at, track)
+    for i, (question, options, correct, explanation, at, k, j) in enumerate(polls, 1):
+        await botkit.send_quiz(context, chat, f"{i}. {question}", options, correct, explanation, at, track,
+                               buttons=[botkit.evidence_button(lid, k, j)])
     if kind in ("essay", "all") and lec.get("essay"):
         await _send_essay(context, chat, lid, lec, 0)
+
+
+def _tf(t: dict) -> str:
+    english = sum(c.isascii() and c.isalpha() for c in t["statement"]) > len(t["statement"]) / 2
+    return ("True or false? " if english else "صح أم خطأ؟ ") + t["statement"]
+
+
+# ---------- the proof: the lecturer's own words behind an answer ----------
+
+def _context_line(transcript: str, at: str) -> str:
+    """The transcript paragraph that contains the moment `at` (transcript lines start with [mm:ss])."""
+    def secs(t: str) -> int:
+        n = 0
+        for x in t.split(":"):
+            n = n * 60 + int(x) if x.isdigit() else n
+        return n
+    best = ""
+    for para in (transcript or "").split("\n\n"):
+        if para.startswith("[") and "]" in para:
+            if secs(para[1:para.index("]")]) <= secs(at):
+                best = para[para.index("]") + 1:].strip()
+            else:
+                break
+    return best
+
+
+async def on_evidence(update: Update, context, arg: str) -> None:
+    lid, kind, i = (arg.split(":") + ["", "", ""])[:3]
+    lec = store.get(update.effective_user.id, context.user_data, lid)
+    items = (lec or {}).get({"m": "mcq", "t": "true_false"}.get(kind, ""), [])
+    if not i.isdigit() or int(i) >= len(items):
+        return
+    item = items[int(i)]
+    quote, at = item.get("evidence", ""), item.get("time", "")
+    if not quote:
+        await context.bot.send_message(update.effective_chat.id, "لا يوجد اقتباس محفوظ لهذا السؤال.")
+        return
+    lines = ["📍 <b>الدليل من كلام المحاضر</b>" + (f" ⏱ {escape(at)}" if at else ""), f"«{escape(quote)}»"]
+    around = _context_line(lec.get("transcript", ""), at) if at else ""
+    if around and quote[:20] not in around[:20]:
+        lines += ["", f"<b>السياق:</b> {escape(around[:700])}"]
+    await context.bot.send_message(update.effective_chat.id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # ---------- essay questions ----------
@@ -162,8 +208,7 @@ async def on_course_quiz(update: Update, context, arg: str) -> None:
     course = library.courses(ud).get(cid)
     if not course:
         return
-    lectures = [(lid, store.get(uid, ud, lid)) for lid in library.course_lectures(ud, cid)]
-    lectures = [(lid, lec) for lid, lec in lectures if lec]
+    lectures = _course_lectures(context, uid, cid)
     if not kind:
         n_mcq = sum(len(lec.get("mcq", [])) for _, lec in lectures)
         n_tf = sum(len(lec.get("true_false", [])) for _, lec in lectures)
@@ -181,26 +226,156 @@ async def on_course_quiz(update: Update, context, arg: str) -> None:
                   "وتتكرر أكثر أسئلة المحاضرات التي تحتاج مراجعة.",
             parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
         return
+    for i, (lid, question, options, correct, explanation, k, j) in enumerate(_pick(ud, lectures, kind), 1):
+        await botkit.send_quiz(context, chat, f"{i}. {question}", options, correct, explanation, "",
+                               {"kind": "lecture", "uid": uid, "lid": lid},
+                               buttons=[botkit.evidence_button(lid, k, j)])
+
+
+def _pick(ud: dict, lectures: list, kind: str, size: int = COURSE_QUIZ_SIZE) -> list:
+    """Questions from a course's lectures; weak lectures come up more often, no question twice."""
     stats = ud.get("stats", {})
     pool = []
     for lid, lec in lectures:
         w = _weight(stats, lid)
         if kind in ("mcq", "all"):
-            pool += [(w, lid, q["question"], q["options"], q["answer_index"], q.get("explanation", ""))
-                     for q in lec.get("mcq", [])]
+            pool += [(w, lid, q["question"], q["options"], q["answer_index"], q.get("explanation", ""), "m", j)
+                     for j, q in enumerate(lec.get("mcq", []))]
         if kind in ("tf", "all"):
-            pool += [(w, lid, f"صح أم خطأ؟ {t['statement']}", ["صح", "خطأ"], 0 if t["answer"] else 1,
-                      t.get("explanation", "")) for t in lec.get("true_false", [])]
+            pool += [(w, lid, _tf(t), ["صح", "خطأ"], 0 if t["answer"] else 1, t.get("explanation", ""), "t", j)
+                     for j, t in enumerate(lec.get("true_false", []))]
     # Weighted sampling without replacement: a higher weight makes a question likelier to be picked.
     pool.sort(key=lambda item: -(random.random() ** (1 / item[0])))
     seen, picked = set(), []
     for item in pool:
         if item[2] not in seen:  # the same question can come from a lecture shared twice
             seen.add(item[2])
-            picked.append(item)
-    for i, (_, lid, question, options, correct, explanation) in enumerate(picked[:COURSE_QUIZ_SIZE], 1):
-        await botkit.send_quiz(context, chat, f"{i}. {question}", options, correct, explanation, "",
-                               {"kind": "lecture", "uid": uid, "lid": lid})
+            picked.append(item[1:])
+    return picked[:size]
+
+
+# ---------- exam simulation: one question at a time, against the clock ----------
+
+SIM_SIZE = 20
+SIM_SECONDS = {"m": 60, "t": 30}
+
+
+def _course_lectures(context, uid: int, cid: str) -> list:
+    ud = context.user_data
+    lectures = [(lid, store.get(uid, ud, lid)) for lid in library.course_lectures(ud, cid)]
+    return [(lid, lec) for lid, lec in lectures if lec]
+
+
+async def on_sim(update: Update, context, arg: str) -> None:
+    cid, _, step = arg.partition(":")
+    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
+    course = library.courses(ud).get(cid)
+    if not course:
+        return
+    if step == "stop":
+        if ud.get("sim", {}).get("cid") == cid:
+            await _sim_finish(context, chat, uid, stopped=True)
+        return
+    lectures = _course_lectures(context, uid, cid)
+    if step != "go":
+        n = len(_pick(ud, lectures, "all", SIM_SIZE))
+        if not n:
+            await context.bot.send_message(chat, "لا توجد أسئلة في محاضرات هذه المادة بعد.")
+            return
+        await context.bot.send_message(
+            chat, f"⏱ <b>محاكاة اختبار: {escape(course['name'])}</b>\n\n"
+                  f"{_questions(n)} من كل محاضرات المادة، سؤال بعد سؤال، كقاعة الاختبار:\n"
+                  f"• دقيقة لسؤال الاختيار من متعدد، ونصف دقيقة لصح أو خطأ.\n"
+                  "• إذا انتهى الوقت ينتقل السؤال التالي تلقائياً.\n"
+                  "• في النهاية: درجتك، ونسبة جاهزيتك، والمحاضرات التي تحتاج مراجعة.\n\nجاهز؟",
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[button("▶️ ابدأ المحاكاة", f"sim:{cid}:go")]]))
+        return
+    items = _pick(ud, lectures, "all", SIM_SIZE)
+    if not items:
+        return
+    random.shuffle(items)
+    ud["sim"] = {"cid": cid, "items": items, "i": 0, "right": 0, "per": {}, "started": time.time(),
+                 "token": uuid.uuid4().hex[:8]}
+    await _sim_next(context, chat, uid)
+
+
+async def _sim_next(context, chat: int, uid: int) -> None:
+    sim = context.user_data.get("sim")
+    if not sim:
+        return
+    for job in context.job_queue.get_jobs_by_name(f"sim:{uid}"):
+        job.schedule_removal()
+    if sim["i"] >= len(sim["items"]):
+        await _sim_finish(context, chat, uid)
+        return
+    lid, question, options, correct, explanation, k, j = sim["items"][sim["i"]]
+    seconds = SIM_SECONDS[k]
+    await botkit.send_quiz(context, chat, f"{sim['i'] + 1}/{len(sim['items'])}. {question}", options, correct,
+                           explanation, "", {"kind": "sim", "uid": uid, "lid": lid, "token": sim["token"], "i": sim["i"]},
+                           buttons=[button("⏹ إنهاء المحاكاة", f"sim:{sim['cid']}:stop")], open_period=seconds)
+    context.job_queue.run_once(_sim_timeout, seconds + 3, chat_id=chat, user_id=uid, name=f"sim:{uid}",
+                               data={"token": sim["token"], "i": sim["i"]})
+
+
+def _record(sim: dict, right: bool) -> None:
+    lid = sim["items"][sim["i"]][0]
+    c, t = sim["per"].get(lid, (0, 0))
+    sim["per"][lid] = (c + int(right), t + 1)
+    sim["right"] += int(right)
+    sim["i"] += 1
+
+
+async def _sim_timeout(context: ContextTypes.DEFAULT_TYPE) -> None:
+    sim = context.user_data.get("sim")
+    data = context.job.data
+    if sim and sim["token"] == data["token"] and sim["i"] == data["i"]:
+        _record(sim, False)
+        await _sim_next(context, context.job.chat_id, context.job.user_id)
+
+
+async def sim_answer(context, info: dict, right: bool) -> None:
+    sim = context.user_data.get("sim")
+    if sim and sim["token"] == info.get("token") and sim["i"] == info.get("i"):
+        _record(sim, right)
+        await _sim_next(context, info["uid"], info["uid"])
+
+
+def _readiness(pct: int) -> str:
+    if pct >= 85:
+        return "💪 جاهز للاختبار"
+    if pct >= 70:
+        return "👍 قريب من الجاهزية: راجع المحاضرات أدناه"
+    return "📚 تحتاج مراجعة قبل الاختبار"
+
+
+async def _sim_finish(context, chat: int, uid: int, stopped: bool = False) -> None:
+    ud = context.user_data
+    sim = ud.pop("sim", None)
+    for job in context.job_queue.get_jobs_by_name(f"sim:{uid}"):
+        job.schedule_removal()
+    if not sim or not sim["i"]:
+        await context.bot.send_message(chat, "⏹ أُنهيت المحاكاة.")
+        return
+    done, right = sim["i"], sim["right"]
+    pct = round(100 * right / done)
+    course = library.courses(ud).get(sim["cid"])
+    if course is not None and not stopped:
+        course["readiness"] = {"pct": pct, "date": study.today().isoformat()}
+    lines = ["⏱ <b>نتيجة المحاكاة</b>" + (" (أُنهيت مبكراً)" if stopped else ""),
+             f"✅ {right} من {done} · {pct}%\n{_bar(round(pct / 10))}",
+             f"⌛ الوقت: {botkit.minutes(time.time() - sim['started'])}", "", f"<b>جاهزيتك: {pct}%</b> · {_readiness(pct)}"]
+    weak = sorted(((c / t, lid) for lid, (c, t) in sim["per"].items() if t and c / t < 0.7))
+    rows = []
+    if weak:
+        lines += ["", "<b>راجع هذه المحاضرات:</b>"]
+        for frac, lid in weak[:5]:
+            title = ud.get("lectures", {}).get(lid, {}).get("title") or "محاضرة"
+            c, t = sim["per"][lid]
+            lines.append(f"• {escape(title)}: {c} من {t}")
+            rows.append([button(f"🧪 {title[:40]}", f"quiz:{lid}")])
+    rows.append([button("🔁 محاكاة جديدة", f"sim:{sim['cid']}:go")])
+    await context.bot.send_message(chat, "\n".join(lines), parse_mode=ParseMode.HTML,
+                                   reply_markup=InlineKeyboardMarkup(rows))
 
 
 def register(app) -> None:
@@ -208,5 +383,6 @@ def register(app) -> None:
 
 
 botkit.LECTURE_BUTTONS.update({"quiz": on_quiz, "qz": on_kind})
-botkit.BUTTONS.update({"es": on_essay_button, "cq": on_course_quiz})
+botkit.BUTTONS.update({"es": on_essay_button, "cq": on_course_quiz, "sim": on_sim, "ev": on_evidence})
+botkit.POLL_HOOKS.update({"sim": sim_answer})
 botkit.TEXT_INPUTS.update({"essay_answer": input_essay_answer})

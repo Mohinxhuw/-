@@ -23,6 +23,7 @@ BUTTONS: dict = {}
 LECTURE_BUTTONS: dict = {}
 TEXT_INPUTS: dict = {}
 START_LINKS: dict = {}
+POLL_HOOKS: dict = {}  # poll kind -> fn(context, info, right), after an answer is recorded
 
 
 def keyboard(options: dict[str, str], prefix: str, other: str | None = None, per_row: int = 2) -> InlineKeyboardMarkup:
@@ -51,7 +52,8 @@ def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup([
         [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
         second,
-        [button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
+        [button("📖 المصطلحات", f"terms:{lid}") if (meta or {}).get("lang") == "en"
+         else button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
     ])
 
 
@@ -60,6 +62,7 @@ def more_keyboard(lid: str, ud: dict) -> InlineKeyboardMarkup:
         [button("📤 Word", f"docx:{lid}"), button("📝 Notion", f"md:{lid}")],
         [button("📄 النص الكامل", f"txt:{lid}"), button("📁 نقل لمادة أخرى", f"mv:{lid}")],
         [button("🔗 شاركها مع زميل", f"share:{lid}")],
+        [button("📖 المصطلحات", f"terms:{lid}")],
     ]
     if ud.get("groups"):
         rows[-1].append(button("👥 أرسلها لمجموعة", f"tog:{lid}"))
@@ -110,19 +113,31 @@ def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE, lid: str) -> dic
 
 
 async def send_quiz(context, chat_id: int, question: str, options: list[str], correct: int, explanation: str,
-                    at: str, track: dict | None = None) -> None:
-    """A Telegram quiz poll. track (e.g. {"kind": "lecture", "lid": ...}) records answers for statistics."""
+                    at: str, track: dict | None = None, buttons: list | None = None,
+                    open_period: int | None = None) -> str | None:
+    """A Telegram quiz poll; returns its id. track (e.g. {"kind": "lecture", "lid": ...}) records answers
+    for statistics. buttons: one row of buttons under the poll. open_period: seconds to answer."""
+    pid = None
     try:
         msg = await context.bot.send_poll(
             chat_id, question[:300], [o[:100] for o in options], type=Poll.QUIZ, correct_option_ids=[correct],
             explanation=(explanation + (f" ⏱ {at}" if at else ""))[:200], is_anonymous=False,
+            open_period=open_period, reply_markup=InlineKeyboardMarkup([buttons]) if buttons else None,
         )
-        if track is not None and msg.poll:
-            polls = context.bot_data.setdefault("polls", {})
-            polls[msg.poll.id] = dict(track, correct=correct, ts=time.time())
+        if msg.poll:
+            pid = msg.poll.id
+            if track is not None:
+                polls = context.bot_data.setdefault("polls", {})
+                polls[pid] = dict(track, correct=correct, ts=time.time())
     except TelegramError as e:
         log.warning("poll failed: %s", e)
     await asyncio.sleep(0.4)
+    return pid
+
+
+def evidence_button(lid: str, kind: str, i: int):
+    """"📍 The proof": the lecturer's own words behind a question's answer."""
+    return button("📍 الدليل", f"ev:{lid}:{kind}:{i}")
 
 
 async def send_lecture_pdf(context, chat_id: int, user_id: int, ud: dict, lid: str, caption: str) -> bool:

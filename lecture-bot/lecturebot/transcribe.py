@@ -35,6 +35,7 @@ MAJOR_HINTS = {
     "languages": "محاضرة في اللغات والآداب.",
 }
 DEFAULT_HINT = "محاضرة جامعية باللغة العربية، وقد تحتوي على مصطلحات إنجليزية."
+ENGLISH_HINT = "A university lecture in English."
 
 @dataclass
 class Segment:
@@ -47,8 +48,13 @@ class TranscriptionError(Exception):
     pass
 
 
-def build_prompt(major: str | None = None, terms: list[str] | None = None) -> str:
+def build_prompt(major: str | None = None, terms: list[str] | None = None, lang: str = "ar") -> str:
     """Context for Whisper. It only reads the last ~224 tokens, so keep it short; terms go last."""
+    if lang == "en":
+        terms = list(terms or [])[:20]
+        while terms and len(ENGLISH_HINT) + len(", ".join(terms)) + 20 > 420:
+            terms.pop()
+        return ENGLISH_HINT + (" Terms: " + ", ".join(terms) + "." if terms else "")
     base = MAJOR_HINTS.get(major or "", DEFAULT_HINT)
     terms = list(terms or [])[:20]
     # ~420 characters stays under Groq's 224-token prompt limit (measured: 377 chars = 172 tokens).
@@ -58,15 +64,16 @@ def build_prompt(major: str | None = None, terms: list[str] | None = None) -> st
 
 
 def transcribe(audio: np.ndarray, major: str | None = None, on_progress=None,
-               terms: list[str] | None = None) -> list[Segment]:
-    """Transcribe 16 kHz mono audio. on_progress(fraction) is called as work completes."""
-    prompt = build_prompt(major, terms)
+               terms: list[str] | None = None, lang: str = "ar") -> list[Segment]:
+    """Transcribe 16 kHz mono audio. on_progress(fraction) is called as work completes.
+    lang: the language the lecture is taught in ("ar" or "en")."""
+    prompt = build_prompt(major, terms, lang)
     if config.GROQ_API_KEY:
         try:
-            return _transcribe_groq(audio, prompt, on_progress)
+            return _transcribe_groq(audio, prompt, on_progress, lang)
         except Exception as e:  # keep the student's job alive: fall back to the local model
             log.warning("Groq transcription failed, using the local model: %s", e)
-    return _transcribe_local(audio, prompt, terms, on_progress)
+    return _transcribe_local(audio, prompt, terms, on_progress, lang)
 
 
 # ---------- Groq ----------
@@ -96,7 +103,7 @@ def _encode_ogg(audio: np.ndarray) -> bytes:
     ).stdout
 
 
-def _groq_request(data: bytes, prompt: str) -> dict:
+def _groq_request(data: bytes, prompt: str, lang: str = "ar") -> dict:
     import httpx
 
     for attempt in range(5):
@@ -104,7 +111,7 @@ def _groq_request(data: bytes, prompt: str) -> dict:
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
             files={"file": ("audio.ogg", io.BytesIO(data), "audio/ogg")},
-            data={"model": config.GROQ_MODEL, "language": "ar", "prompt": prompt, "temperature": "0",
+            data={"model": config.GROQ_MODEL, "language": lang, "prompt": prompt, "temperature": "0",
                   "response_format": "verbose_json", "timestamp_granularities[]": "segment"},
             timeout=300,
         )
@@ -118,14 +125,14 @@ def _groq_request(data: bytes, prompt: str) -> dict:
     raise TranscriptionError("Groq: too many retries")
 
 
-def _transcribe_groq(audio: np.ndarray, prompt: str, on_progress=None) -> list[Segment]:
+def _transcribe_groq(audio: np.ndarray, prompt: str, on_progress=None, lang: str = "ar") -> list[Segment]:
     points = _split_points(audio, config.TRANSCRIBE_CHUNK_SECONDS)
     chunks = [(points[i], points[i + 1]) for i in range(len(points) - 1)]
     done, lock = [0], threading.Lock()
 
     def work(bounds):
         lo, hi = bounds
-        result = _groq_request(_encode_ogg(audio[lo:hi]), prompt)
+        result = _groq_request(_encode_ogg(audio[lo:hi]), prompt, lang)
         with lock:
             done[0] += 1
             if on_progress:
@@ -161,10 +168,11 @@ def _get_model():
         return _model
 
 
-def _transcribe_local(audio: np.ndarray, prompt: str, terms: list[str] | None, on_progress=None) -> list[Segment]:
+def _transcribe_local(audio: np.ndarray, prompt: str, terms: list[str] | None, on_progress=None,
+                      lang: str = "ar") -> list[Segment]:
     model = _get_model()
     duration = len(audio) / SR or 1.0
-    opts = dict(language="ar", initial_prompt=prompt, condition_on_previous_text=False, beam_size=5,
+    opts = dict(language=lang, initial_prompt=prompt, condition_on_previous_text=False, beam_size=5,
                 vad_filter=True, vad_parameters={"threshold": 0.35, "min_silence_duration_ms": 700},
                 hotwords=" ".join(terms[:20]) if terms else None)
     if config.WHISPER_BATCH_SIZE > 1:

@@ -89,6 +89,22 @@ without having heard the lecture.
 - Every "time" value is a timestamp copied from the transcript lines, in the same format, where that \
 idea is explained."""
 
+ENGLISH_LECTURE = """This lecture is taught in English and the transcript is in English. The student \
+is an Arabic speaker who studies and is examined in English, so they need to understand it in Arabic \
+and answer in English. This replaces the language instructions above:
+- title and subject: in English, as they would appear on the course.
+- overview, sections, divisions and comparisons: in clear Modern Standard Arabic that explains the \
+ideas, keeping every technical term in English (Latin letters) with its Arabic meaning the first time \
+it appears, for example "Mitochondria (الميتوكوندريا)".
+- glossary: every technical term the lecturer used, not only the main ones: term in English exactly \
+as used, arabic its Arabic equivalent, explanation in Arabic. It is the student's dictionary for the \
+course.
+- mcq, true_false and essay (questions, options, statements, model answers and key points): in \
+English, as in the exam. Each explanation: in Arabic, with the terms in English.
+- flashcards: front an English term or question, back a short answer in Arabic with the English term.
+- transcript_fixes: English words the recognizer misheard.
+- evidence quotes are copied word for word from the English transcript."""
+
 NOTES_SYSTEM = f"""You write the study notes for a recorded Arabic university lecture.
 
 {COMMON}
@@ -174,6 +190,7 @@ defended as correct;
 - it asks about a side remark, a joke, an example of no importance, or something the outline shows \
 is not part of the lecture's content;
 - it repeats another item.
+Items are in English when the lecture was taught in English; judge them the same way.
 Otherwise keep is true. reason: a few words. Judge strictly: it is better to drop a doubtful question \
 than to show a wrong one."""
 
@@ -200,7 +217,7 @@ def _transcript_text(segments: list[Segment]) -> str:
     return "\n".join(f"[{fmt_time(s.start)}] {s.text}" for s in segments)
 
 
-def _content(segments, major, images, duration, materials, parts) -> list[dict]:
+def _content(segments, major, images, duration, materials, parts, lang="ar") -> list[dict]:
     content: list[dict] = []
     for m in materials:
         if m.pdf:
@@ -215,6 +232,8 @@ def _content(segments, major, images, duration, materials, parts) -> list[dict]:
     field = MAJOR_NAMES.get(major or "")
     if field:
         intro.append(f"تخصص الطالب: {field}.")
+    if lang == "en":
+        intro.append("المحاضرة باللغة الإنجليزية.")
     if materials:
         intro.append("مرفق ملفات المحاضرة: " + "، ".join(m.name for m in materials) + ".")
     if images:
@@ -268,22 +287,24 @@ def _call(system: str, content: list[dict], schema: dict, on_text=None, model: s
 
 def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
             duration: float = 0.0, materials: list | None = None, parts: list[tuple[float, str]] | None = None,
-            on_section=None, model: str | None = None, questions_model: str | None = None) -> dict:
+            on_section=None, model: str | None = None, questions_model: str | None = None, lang: str = "ar") -> dict:
     """Return the study material (all PROPS keys), plus "_usage": tokens and dollars spent.
 
     model writes the notes and reviews the questions; questions_model writes the questions.
 
     materials: lecture files (lecturebot.materials.Material). parts: (start_seconds, title) of each
     recording when several were joined. on_section(section) is called as each summary section is written.
+    lang "en": the lecture is taught in English (notes in Arabic, questions in English).
     """
-    content = _content(segments, major, images, duration, materials or [], parts)
+    content = _content(segments, major, images, duration, materials or [], parts, lang)
+    extra = "\n\n" + ENGLISH_LECTURE if lang == "en" else ""
     questions: dict = {}
     usage: dict = {}
     failure: list[Exception] = []
 
     def ask_questions():
         try:
-            data, u = _call(QUESTIONS_SYSTEM, content, QUESTIONS_SCHEMA, model=questions_model or model)
+            data, u = _call(QUESTIONS_SYSTEM + extra, content, QUESTIONS_SCHEMA, model=questions_model or model)
             questions.update(data)
             questions["_q_usage"] = u
         except Exception as e:  # reported after the notes are done
@@ -292,7 +313,7 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     worker = threading.Thread(target=ask_questions, daemon=True)
     worker.start()
     sections = _SectionStream(on_section) if on_section else None
-    result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
+    result, u = _call(NOTES_SYSTEM + extra, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
     add_usage(usage, u)
     worker.join()
     if failure:

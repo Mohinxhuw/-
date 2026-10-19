@@ -85,7 +85,8 @@ ANALYSIS = {
     "glossary": [{"term": "ATP", "arabic": "أدينوسين", "explanation": "طاقة"}],
     "mcq": [{"question": "أين يحدث كربس؟", "options": ["النواة", "الميتوكوندريا"], "answer_index": 1,
              "explanation": "", "time": "01:00"}],
-    "true_false": [{"statement": "التحلل في النواة", "answer": False, "explanation": "", "time": "00:05"}],
+    "true_false": [{"statement": "التحلل في النواة", "answer": False, "explanation": "", "time": "00:30",
+                    "evidence": "التحلل السكري"}],
     "essay": [{"question": "اشرح مراحل التنفس الخلوي", "model_answer": "التحلل ثم كربس ثم نقل الإلكترونات.",
                "key_points": ["التحلل", "كربس", "نقل الإلكترونات"], "time": "00:05", "evidence": ""}],
     "flashcards": [{"front": "ناتج التحلل؟", "back": "2 ATP"}], "comparisons": [],
@@ -97,8 +98,12 @@ ANALYSIS = {
 RUNS = []
 
 
-def fake_run(sources, work, *a):
+LANGS = []
+
+
+def fake_run(sources, work, *a, lang="ar", **kw):
     RUNS.append(len(sources))
+    LANGS.append(lang)
     pdf = work / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     r = LectureResult(dict(ANALYSIS), [], pdf, "[00:00] نتحدث اليوم عن الميتوكوندريا\n\n[00:30] التحلل السكري", sources[0])
@@ -109,7 +114,7 @@ def fake_run(sources, work, *a):
 pipeline.run = fake_run
 
 
-def fake_run_files(work, title, *a):
+def fake_run_files(work, title, *a, **kw):
     RUNS.append("files")
     pdf = work / "f.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -121,7 +126,7 @@ def fake_run_files(work, title, *a):
 pipeline.run_files = fake_run_files
 DURATION = [3600.0]
 pipeline.probe_duration = lambda path: DURATION[0]
-pipeline.transcribe_sources = lambda sources, major, mats, stage=None: ([], 1200.0, [(0, "")])
+pipeline.transcribe_sources = lambda sources, major, mats, stage=None, lang="ar": ([], 1200.0, [(0, "")])
 analyze.analyze = lambda segs, **kw: dict(ANALYSIS, _usage={"cost": 0.3 if "opus" in kw["model"] else 0.15,
                                                             "input": 1000, "output": 500})
 study.ask = lambda lec, q, h=None: f"جواب: {q}"
@@ -413,6 +418,51 @@ async def main():
         await send(cmd(T, f"/refund {C}"))
         assert cu["stars"] == 5 - 275 and not cu["payments"]
         await send(cmd(T, "/billing off"))
+
+        # a lecture taught in English: the language button, then the glossary instead of the English PDF
+        await send(msg(A, voice={"file_id": "v8", "file_unique_id": "c8", "duration": 5}))
+        assert "lang:" in last(A, "استلمت")["buttons"]
+        await send(press(A, "lang:"))
+        assert app.user_data[A]["lecture_lang"] == "en"
+        await send(press(A, "go:"))
+        await asyncio.sleep(0.5)
+        assert LANGS[-1] == "en"
+        elid = max(app.user_data[A]["lectures"], key=lambda k: app.user_data[A]["lectures"][k]["time"])
+        assert app.user_data[A]["lectures"][elid]["lang"] == "en"
+        assert f"terms:{elid}" in find_button(A, f"terms:{elid}")
+        await send(press(A, f"terms:{elid}"))
+        assert "ATP" in last(A, "مصطلحات «")["text"]
+        await send(press(A, "lang:"))  # (no collector open: just switches back)
+        assert app.user_data[A]["lecture_lang"] == "ar"
+        ecid = app.user_data[A]["lectures"][elid]["course"]
+        await send(press(A, f"glos:{ecid}"))
+        last(A, "قاموس مادة")
+
+        # the proof behind an answer
+        POLLS.clear()
+        await send(press(A, f"qz:{elid}:tf"))
+        assert f"ev:{elid}:t:0" in find_button(A, "ev:")
+        await send(press(A, f"ev:{elid}:t:0"))
+        assert "«التحلل السكري»" in last(A, "الدليل من كلام المحاضر")["text"]
+
+        # exam simulation: one question at a time, readiness at the end
+        await send(press(A, f"sim:{ecid}"))
+        last(A, "محاكاة اختبار")
+        POLLS.clear()
+        await send(press(A, f"sim:{ecid}:go"))
+        sim = app.user_data[A]["sim"]
+        n = len(sim["items"])
+        assert len(POLLS) == 1 and n >= 1
+        for k in range(n):
+            info = app.bot_data["polls"][POLLS[-1]]
+            await send(answer(A, POLLS[-1], info["correct"] if k else 1 - info["correct"]))
+        assert "sim" not in app.user_data[A] and len(POLLS) == n
+        result = last(A, "نتيجة المحاكاة")["text"]
+        pct = round(100 * (n - 1) / n)
+        assert f"جاهزيتك: {pct}%" in result, result
+        assert app.user_data[A]["courses"][ecid]["readiness"]["pct"] == pct
+        await send(press(A, f"lib:c:{ecid}"))
+        assert f"جاهزيتك: {pct}%" in last(A, "📈")["text"]
 
         # delete everything
         await send(cmd(B, "/delete"))

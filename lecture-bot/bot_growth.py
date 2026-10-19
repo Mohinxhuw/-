@@ -156,7 +156,7 @@ async def on_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not info or not ans.user:
         return
     right = info["correct"] in ans.option_ids
-    if info["kind"] == "lecture":
+    if info["kind"] in ("lecture", "sim"):
         s = _stats(context.user_data)
         s["answered"] += 1
         s["correct"] += int(right)
@@ -171,6 +171,9 @@ async def on_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             q = quiz.setdefault("per_question", {}).setdefault(str(info["q"]), [0, 0])
             q[0] += int(right)
             q[1] += 1
+    hook = botkit.POLL_HOOKS.get(info["kind"])
+    if hook:
+        await hook(context, info, right)
 
 
 def prune_polls(context) -> None:
@@ -318,16 +321,18 @@ COMPARE_MODELS = (("Opus", "claude-opus-5-5", "claude-opus-5-5"),
 GROQ_DOLLARS_PER_HOUR = 0.111
 
 
-async def run_compare(context, chat_id: int, status, sources, work, major, images, mats) -> None:
+async def run_compare(context, chat_id: int, status, sources, work, major, images, mats, lang: str = "ar") -> None:
     """Transcribe once, write the notes and questions with each model, send both PDFs with their costs."""
     await status.edit_text("🔬 مقارنة: أحوّل الكلام إلى نص…")
-    segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats)
+    segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats,
+                                                        None, lang)
     await status.edit_text("🔬 مقارنة: يكتب النموذجان الملخص والأسئلة في الوقت نفسه… (دقائق)")
 
     async def one(label, model, questions_model):
         started = time.time()
         result = await asyncio.to_thread(analyze.analyze, segments, major=major, images=images, duration=duration,
-                                         materials=mats, parts=parts, model=model, questions_model=questions_model)
+                                         materials=mats, parts=parts, model=model, questions_model=questions_model,
+                                         lang=lang)
         res = await asyncio.to_thread(pipeline.finish, result, segments, work, sources[0], duration, f"-{label}")
         return label, res, time.time() - started
 

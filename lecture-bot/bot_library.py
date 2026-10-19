@@ -79,6 +79,9 @@ async def _course(update: Update, context, cid: str) -> None:
     lectures = ud["lectures"]
     planned_done = {l for day in c.get("plan", []) if day["done"] for l in day["lids"]}
     lines = [f"📁 <b>{escape(c['name'])}</b> · {_lectures(len(lids))}"]
+    if c.get("readiness"):
+        r = c["readiness"]
+        lines.append(f"📈 جاهزيتك: {r['pct']}% (آخر محاكاة {library.day_name(dt.date.fromisoformat(r['date']), today)})")
     left = library.days_left(c, today)
     if left is not None and left >= 0:
         exam = dt.date.fromisoformat(c["exam"])
@@ -89,6 +92,7 @@ async def _course(update: Update, context, cid: str) -> None:
             for l in lids[-25:]]
     rows.append([button("📅 موعد الاختبار", f"lib:date:{cid}"), button("🗓 خطة المذاكرة", f"lib:plan:{cid}")])
     rows.append([button("🧪 اختبار شامل للمادة", f"cq:{cid}"), button("🌙 ملخص ليلة الاختبار", f"lib:exam:{cid}")])
+    rows.append([button("⏱ محاكاة الاختبار", f"sim:{cid}"), button("📖 مصطلحات المادة", f"glos:{cid}")])
     rows.append([button("✏️ إعادة التسمية", f"lib:ren:{cid}")])
     rows.append([button("↩️ المكتبة", "lib:home:")])
     await _show(update, context, "\n".join(lines), rows)
@@ -281,6 +285,54 @@ async def generate_exam(update: Update, context, lids: list[str]) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------- glossary: the terms of a lecture or of a whole course ----------
+
+def _glossary_lines(lectures: list[dict]) -> list[str]:
+    seen, lines = set(), []
+    for lec in lectures:
+        for g in lec.get("glossary", []):
+            term = (g.get("term") or "").strip()
+            if term and term.lower() not in seen:
+                seen.add(term.lower())
+                meaning = " — ".join(x for x in (g.get("arabic", ""), g.get("explanation", "")) if x)
+                lines.append(f"• <b>{escape(term)}</b>: {escape(meaning)}")
+    return lines
+
+
+async def _send_lines(context, chat: int, head: str, lines: list[str]) -> None:
+    chunk = head
+    for line in lines:
+        if len(chunk) + len(line) > 3800:
+            await context.bot.send_message(chat, chunk, parse_mode=ParseMode.HTML)
+            chunk = ""
+        chunk += "\n" + line
+    await context.bot.send_message(chat, chunk, parse_mode=ParseMode.HTML)
+
+
+async def on_terms(update: Update, context, lid: str, lec: dict, extra: str) -> None:
+    lines = _glossary_lines([lec])
+    if not lines:
+        await context.bot.send_message(update.effective_chat.id, "لا توجد مصطلحات في هذه المحاضرة.")
+        return
+    await _send_lines(context, update.effective_chat.id, f"📖 <b>مصطلحات «{escape(lec['title'])}»</b> ({len(lines)})\n",
+                      lines)
+
+
+async def on_course_terms(update: Update, context, cid: str) -> None:
+    ud, uid = context.user_data, update.effective_user.id
+    course = library.courses(ud).get(cid)
+    if not course:
+        return
+    lectures = [lec for lec in (store.get(uid, ud, l) for l in library.course_lectures(ud, cid)) if lec]
+    lines = _glossary_lines(sorted(lectures, key=lambda l: l["time"]))
+    if not lines:
+        await context.bot.send_message(update.effective_chat.id, "لا توجد مصطلحات في محاضرات هذه المادة بعد.")
+        return
+    await _send_lines(context, update.effective_chat.id,
+                      f"📖 <b>قاموس مادة «{escape(course['name'])}»</b> ("
+                      + botkit.count(len(lines), "مصطلح واحد", "مصطلحان", "مصطلحات", "مصطلحاً") + ")\n", lines)
+
+
 # ---------- search ----------
 
 async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -367,7 +419,8 @@ def register(app) -> None:
     app.job_queue.run_repeating(daily_reminders, interval=600, first=60)
 
 
-botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "plan": on_plan})
-botkit.LECTURE_BUTTONS.update({"mv": on_move})
+botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "plan": on_plan,
+                       "glos": on_course_terms})
+botkit.LECTURE_BUTTONS.update({"mv": on_move, "terms": on_terms})
 botkit.TEXT_INPUTS.update({"search": input_search, "exam_date": input_exam_date, "rename_course": input_rename,
                            "new_course": input_new_course})

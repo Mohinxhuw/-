@@ -75,6 +75,13 @@ LABELS = {
 }
 
 
+
+def _dir(text: str) -> str:
+    """Questions of a lecture taught in English read left to right inside the Arabic page."""
+    latin = sum(c.isascii() and c.isalpha() for c in text)
+    arabic = sum("\u0600" <= c <= "\u06ff" for c in text)
+    return ' dir="ltr"' if latin > 2 * arabic else ""
+
 def _letter(i: int, letters: str = LABELS["ar"]["letters"]) -> str:
     return letters[i] if i < len(letters) else str(i + 1)
 
@@ -142,13 +149,15 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
     if mcq:
         parts.append(f"<h2>{L['mcq']}</h2>")
         for i, q in enumerate(mcq, 1):
-            opts = "".join(f'<li><span class="opt">({letter(j)})</span> {e(o)}</li>' for j, o in enumerate(q["options"]))
-            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b><ul>{opts}</ul></div>')
+            mark = (lambda j: _letter(j, LABELS["en"]["letters"])) if _dir(q["question"]) else letter
+            opts = "".join(f'<li><span class="opt">({mark(j)})</span> {e(o)}</li>' for j, o in enumerate(q["options"]))
+            parts.append(f'<div class="q"{_dir(q["question"])}><b>{i}. {e(q["question"])}</b><ul>{opts}</ul></div>')
         parts.append(f'<h3>{L["answers"]}</h3><table class="answers"><thead><tr><th>{L["question"]}</th>'
                      f'<th>{L["answer_expl"]}</th></tr></thead>')
         for i, q in enumerate(mcq, 1):
             ans = q["options"][q["answer_index"]]
-            parts.append(f"<tr><td>{i}</td><td><b>({letter(q['answer_index'])}) {e(ans)}</b><br>{e(q.get('explanation', ''))} "
+            mark = (lambda j: _letter(j, LABELS["en"]["letters"])) if _dir(q["question"]) else letter
+            parts.append(f"<tr><td>{i}</td><td><b>({mark(q['answer_index'])}) {e(ans)}</b><br>{e(q.get('explanation', ''))} "
                          f"{_t(q.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
 
@@ -156,7 +165,8 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
     if tf:
         parts.append(f"<h2>{L['tf']}</h2>")
         for i, t in enumerate(tf, 1):
-            parts.append(f'<div class="q"><b>{i}. {e(t["statement"])}</b> <span class="opt">( &nbsp; &nbsp; )</span></div>')
+            parts.append(f'<div class="q"{_dir(t["statement"])}><b>{i}. {e(t["statement"])}</b> '
+                         '<span class="opt">( &nbsp; &nbsp; )</span></div>')
         parts.append(f'<h3>{L["answers"]}</h3><table class="answers"><thead><tr><th>{L["question"]}</th>'
                      f'<th>{L["answer_expl"]}</th></tr></thead>')
         for i, t in enumerate(tf, 1):
@@ -169,8 +179,8 @@ def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", 
     if essays:
         parts.append(f"<h2>{L['essay']}</h2>")
         for i, q in enumerate(essays, 1):
-            parts.append(f'<div class="q"><b>{i}. {e(q["question"])}</b> {_t(q.get("time", ""), source_url)}'
-                         f'<div class="answer"><b>{L["model_answer"]}:</b> {e(q.get("model_answer", ""))}</div></div>')
+            parts.append(f'<div class="q"{_dir(q["question"])}><b>{i}. {e(q["question"])}</b> '
+                         f'{_t(q.get("time", ""), source_url)}<div class="answer"><b>{L["model_answer"]}:</b> {e(q.get("model_answer", ""))}</div></div>')
 
     cards = result.get("flashcards", [])
     if cards:
