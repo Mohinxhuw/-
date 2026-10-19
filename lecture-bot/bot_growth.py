@@ -20,7 +20,7 @@ from telegram.ext import CommandHandler, ContextTypes
 import botkit
 import bot_wallet
 from botkit import button, log
-from lecturebot import analyze, config, exports, library, pipeline, render, study
+from lecturebot import analyze, config, exports, library, media, pipeline, render, study
 
 
 def _questions(n: int) -> str:
@@ -304,6 +304,57 @@ async def owner_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text("👑 أنت مالك البوت الآن. لديك أمر /compare لمقارنة نماذج Claude.")
 
 
+async def tell_owner(context, text: str) -> None:
+    """Technical problems go to the owner (the student only sees a short message)."""
+    owner = context.bot_data.get("owner")
+    if owner:
+        try:
+            await context.bot.send_message(owner, text[:4000], disable_web_page_preview=True)
+        except TelegramError:
+            pass
+
+
+async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/cookies: the owner sends a YouTube account's cookies.txt, for servers YouTube asks to sign in."""
+    if not botkit.is_owner(context, update.effective_user.id):
+        return
+    path = media.youtube_cookies()
+    if context.args and context.args[0] == "off":
+        path.unlink(missing_ok=True)
+        await update.effective_message.reply_text("🍪 حُذف ملف الكوكيز.")
+        return
+    botkit.expect(context.user_data, "cookies")
+    state = "موجود ✅" if path.exists() else "غير موجود"
+    await update.effective_message.reply_text(
+        f"🍪 ملف كوكيز يوتيوب: {state}\nأرسل الآن ملف cookies.txt (من حساب يوتيوب مخصص للبوت، لا حسابك الشخصي).\n"
+        "/cookies off لحذفه.")
+
+
+async def on_cookies_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Called for a document while the owner is expected to send cookies.txt; True if handled."""
+    pending = context.user_data.get("await") or {}
+    doc = update.effective_message.document
+    if pending.get("kind") != "cookies" or not doc or not botkit.is_owner(context, update.effective_user.id):
+        return False
+    context.user_data.pop("await", None)
+    f = await context.bot.get_file(doc.file_id)
+    data = bytes(await f.download_as_bytearray())
+    if b"youtube.com" not in data or (b"# Netscape" not in data[:200] and b"\t" not in data):
+        await update.effective_message.reply_text("⚠️ هذا لا يبدو ملف cookies.txt من يوتيوب. أرسل /cookies وحاول مجدداً.")
+        return True
+    path = media.youtube_cookies()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    path.chmod(0o600)
+    try:
+        await update.effective_message.delete()  # the cookies are a login: do not leave them in the chat
+    except TelegramError:
+        pass
+    await context.bot.send_message(update.effective_chat.id, "✅ حُفظ ملف الكوكيز، وحذفت رسالته من المحادثة. "
+                                                             "جرّب رابط يوتيوب الآن.")
+    return True
+
+
 async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not botkit.is_owner(context, update.effective_user.id):
         return
@@ -365,6 +416,7 @@ async def run_compare(context, chat_id: int, status, sources, work, major, image
 def register(app) -> None:
     app.add_handler(CommandHandler("owner", owner_cmd))
     app.add_handler(CommandHandler("compare", compare_cmd))
+    app.add_handler(CommandHandler("cookies", cookies_cmd))
     for name, fn in (("stats", stats_cmd), ("invite", invite_cmd), ("teacher", teacher_cmd), ("results", results_cmd)):
         app.add_handler(CommandHandler(name, fn))
     app.job_queue.run_repeating(_prune_job, interval=86400, first=3600)

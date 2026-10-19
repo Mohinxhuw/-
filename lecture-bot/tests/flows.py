@@ -353,6 +353,13 @@ async def main():
         assert "Opus" in last(T, "نتيجة المقارنة")["text"] and "مختلط" in last(T, "نتيجة المقارنة")["text"]
         last(T, "🔬 Opus: $0.30")
 
+        # owner: YouTube cookies (a file that is not cookies.txt is refused)
+        await send(cmd(T, "/cookies"))
+        last(T, "ملف كوكيز يوتيوب")
+        await send(msg(T, document={"file_id": "ck", "file_unique_id": "ck", "file_name": "cookies.txt",
+                                    "mime_type": "text/plain", "file_size": 100}))
+        last(T, "لا يبدو ملف cookies.txt")
+
         # the wallet: charging on, the free hour, a top-up with Stars, and per-use charges
         await send(cmd(T, "/billing on"))
         assert app.bot_data["billing"] is True

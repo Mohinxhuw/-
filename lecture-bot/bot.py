@@ -310,6 +310,8 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """PDF and PowerPoint files of the lecture."""
+    if await bot_growth.on_cookies_file(update, context):
+        return
     msg, doc = update.effective_message, update.effective_message.document
     if not materials.kind_of(doc.file_name, doc.mime_type):
         await msg.reply_text("أرسل التسجيل صوتاً أو فيديو، وملفات المحاضرة بصيغة PDF أو PowerPoint (pptx).")
@@ -481,8 +483,10 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
             for i, p in enumerate(parts, 1):
                 try:
                     sources.append(await _download_part(context, p, work, i))
-                except Exception:
+                except Exception as e:
                     log.exception("download failed (part %d, %s)", i, "link" if p.get("url") else "telegram file")
+                    await bot_growth.tell_owner(context, f"⚠️ تعذّر تنزيل {'رابط' if p.get('url') else 'ملف'} "
+                                                         f"لطالب ({user_id}):\n{p.get('url', '')}\n{str(e)[:600]}")
                     await status.edit_text(
                         "⚠️ تعذّر تنزيل الرابط. تأكد أنه عام (في Google Drive: مشاركة ← أي شخص لديه الرابط)."
                         if p.get("url") else "⚠️ تعذّر تنزيل الملف من تيليجرام. أعد إرساله بعد قليل.")

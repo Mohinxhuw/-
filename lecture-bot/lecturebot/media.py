@@ -65,7 +65,11 @@ def download_url(url: str, out_dir: Path, name: str = "dl") -> Source:
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "retries": 3,
     }
+    # YouTube asks servers to prove they are not a bot; a signed-in account's cookies answer that.
+    if is_youtube(url) and youtube_cookies().exists():
+        opts["cookiefile"] = str(youtube_cookies())
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         path = Path(ydl.prepare_filename(info))
@@ -75,6 +79,12 @@ def download_url(url: str, out_dir: Path, name: str = "dl") -> Source:
 
 
 download_youtube = download_url
+
+
+def youtube_cookies() -> Path:
+    """cookies.txt of a YouTube account (sent to the bot by its owner with /cookies)."""
+    from . import config
+    return config.DATA_DIR / "youtube_cookies.txt"
 
 
 def load_audio(path: Path) -> np.ndarray:
