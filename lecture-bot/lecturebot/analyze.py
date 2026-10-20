@@ -281,7 +281,7 @@ def _call(system: str, content: list[dict], schema: dict, on_text=None, model: s
     try:
         with client.beta.messages.stream(
             model=model or config.CLAUDE_MODEL,
-            max_tokens=64000,
+            max_tokens=128000,  # thinking counts too; a long lecture's notes must not be cut off
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             output_config={"effort": config.CLAUDE_EFFORT, "format": {"type": "json_schema", "schema": schema}},
@@ -297,15 +297,17 @@ def _call(system: str, content: list[dict], schema: dict, on_text=None, model: s
     except anthropic.APIConnectionError as e:
         raise AnalysisError("Could not reach the Claude API") from e
     if message.stop_reason == "refusal":
-        raise AnalysisError("The model declined to process this lecture")
+        details = getattr(message, "stop_details", None)
+        raise AnalysisError(f"The model declined to process this lecture ({getattr(details, 'category', None)}: "
+                            f"{getattr(details, 'explanation', '')})")
     if message.stop_reason == "max_tokens":
-        raise AnalysisError("The study material was too long to finish")
+        raise AnalysisError(f"The study material was too long to finish ({message.usage.output_tokens} tokens)")
     text = "".join(b.text for b in message.content if b.type == "text")
     answered_by = getattr(message, "model", None) or model or config.CLAUDE_MODEL
     try:
         return json.loads(text), cost_of(message.usage, answered_by)
     except json.JSONDecodeError as e:
-        raise AnalysisError("The model returned invalid JSON") from e
+        raise AnalysisError(f"The model returned invalid JSON ({e}; {len(text)} characters)") from e
 
 
 def analyze(segments: list[Segment], major: str | None = None, images: list[tuple[bytes, str]] | None = None,
@@ -334,7 +336,10 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     worker = threading.Thread(target=ask_questions, daemon=True)
     worker.start()
     sections = _SectionStream(on_section) if on_section else None
-    result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
+    try:
+        result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
+    except AnalysisError as e:
+        raise AnalysisError(f"notes: {e}") from e
     add_usage(usage, u)
     if not result.get("sections"):  # a summary file without a summary is worthless: try once more
         result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, model=model)
@@ -343,7 +348,7 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
             raise AnalysisError("The notes came back without a summary")
     worker.join()
     if failure:
-        raise failure[0] if isinstance(failure[0], AnalysisError) else AnalysisError(str(failure[0]))
+        raise AnalysisError(f"questions: {failure[0]}") from failure[0]
     add_usage(usage, questions.pop("_q_usage"))
     result.update(questions)
     source_text = _transcript_text(segments) + "\n" + "\n".join(m.text for m in (materials or []) if m.text)
