@@ -24,7 +24,6 @@ FILES = 60                  # a lecture made of slides / book pages only
 EXPLAIN = 10                # "explain it more simply", per part
 ESSAY = 5                   # grading an essay answer, after ESSAY_FREE free ones per lecture
 ESSAY_FREE = 2
-ENGLISH = 30                # the English PDF
 EXAM = 50                   # the exam-night summary
 CASHBACK = 1                # to the student whose lecture a classmate receives
 FREE_MINUTES = 60           # every new student's first hour of recordings
@@ -108,7 +107,6 @@ def price_list() -> str:
             f"• ملخص من الشرائح أو الكتاب: ⭐ {FILES}\n"
             f"• اشرح لي أبسط: ⭐ {EXPLAIN}\n"
             f"• تصحيح سؤال مقالي: أول {ESSAY_FREE} لكل محاضرة مجاناً، ثم ⭐ {ESSAY}\n"
-            f"• النسخة الإنجليزية: ⭐ {ENGLISH}\n"
             f"• ملخص ليلة الاختبار: ⭐ {EXAM}\n"
             "• المكتبة والاختبارات والبطاقات والمراجعة والخطة: مجاناً دائماً")
 

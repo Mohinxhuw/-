@@ -141,7 +141,6 @@ analyze.analyze = lambda segs, **kw: dict(ANALYSIS, _usage={"cost": 0.3 if "opus
                                                             "input": 1000, "output": 500})
 study.ask = lambda lec, q, h=None: f"جواب: {q}"
 study.grade_essay = lambda q, a: {"score": 7, "good": "ذكرت مرحلتين", "missing": ["نقل الإلكترونات"], "advice": "اذكر الثالثة"}
-study.translate = lambda lec: dict(ANALYSIS, title="Cellular respiration")
 study.exam_summary = lambda lecs: {"title": "ملخص", "overview": "", "topics": [], "must_memorize": [], "pitfalls": [],
                                    "self_test": []}
 
@@ -232,9 +231,9 @@ async def main():
         # buttons under the files: no buttons for what the files already hold
         kb = last(A, "حُفظت في مادة")["buttons"]
         assert f"terms:{lid}" in kb and not any(b.startswith(("div:", "txt:", "tpaper:")) for b in kb), kb
-        for action in ("en", "en", "docx", "md", "more", "simp", "terms"):
+        assert f"en:{lid}" not in kb, "no English version"
+        for action in ("docx", "md", "more", "simp", "terms"):
             await send(press(A, f"{action}:{lid}"))
-        assert ud["lectures"][lid]["en_file_id"].startswith("doc"), "English cached"
 
         # test me: the menu, each kind, and an essay graded
         await send(press(A, f"quiz:{lid}"))
@@ -345,24 +344,21 @@ async def main():
         clid = max(cu["lectures"], key=lambda k: cu["lectures"][k]["time"])
         await send(press(C, f"simp:{clid}:0"))
         assert cu["stars"] == 260 - 10
-        await send(press(C, f"en:{clid}"))
-        await send(press(C, f"en:{clid}"))
-        assert cu["stars"] == 250 - 30, "English charged once"
         for _ in range(3):
             await send(press(C, f"es:{clid}:0:go"))
             await send(msg(C, text="التحلل ثم كربس"))
-        assert cu["stars"] == 220 - 5, "two free essays, then a paid one"
+        assert cu["stars"] == 250 - 5, "two free essays, then a paid one"
         await send(cmd(C, "/exam"))
         await send(press(C, f"ex:t:{clid}"))
         await send(press(C, "ex:go:"))
-        assert cu["stars"] == 215 - 50, "exam-night summary"
+        assert cu["stars"] == 245 - 50, "exam-night summary"
 
         # receiving from a classmate: free at first, then 5 Stars with 1 back to the sender, locked when short
         await send(press(A, f"share:{lid}"))
         token = last(A, "?start=s_")["text"].split("start=s_")[1].split()[0]
         n_c = len(cu["lectures"])
         await send(cmd(C, f"/start s_{token}"))
-        assert len(cu["lectures"]) == n_c + 1 and cu["free_receives"] == 2 and cu["stars"] == 165
+        assert len(cu["lectures"]) == n_c + 1 and cu["free_receives"] == 2 and cu["stars"] == 195
         cu["free_receives"], cu["stars"], a_stars = 0, 3, app.user_data[A].get("stars", 0)
         await send(cmd(C, f"/start s_{token}"))
         assert len(cu["lectures"]) == n_c + 1, "locked, not delivered"

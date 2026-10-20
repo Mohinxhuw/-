@@ -64,16 +64,6 @@ tr.pb { break-before: page; }
 .def-hl { background: #e6e9ed; border-radius: 2pt; }
 """
 
-# Left-to-right version of the stylesheet for the English PDF.
-CSS_EN = """
-@page { @bottom-center { content: "Page " counter(page) " of " counter(pages); } }
-html { direction: ltr; }
-.overview { border-right: 0; border-left: 4pt solid #143f62; }
-ul { padding-right: 0; padding-left: 16pt; }
-.q ul { padding-right: 0; padding-left: 6pt; }
-th, td { text-align: left; }
-"""
-
 LABELS = {
     "ar": {"summary_title": "ملخص المحاضرة", "duration": "المدة", "source": "المصدر",
            "times_note": "الأرقام بجانب النقاط هي وقت شرحها في التسجيل.", "summary": "الملخص",
@@ -88,26 +78,18 @@ LABELS = {
            "ومرجعه في حاشية الصفحة، وما لم يُعثر له على تعريف موثوق وُضع أمامه خط.",
            "transcript_note": "المصطلحات ملوّنة بالأخضر، وتعريف المحاضر لها مظلَّل بالرمادي.",
            "visuals_warning": "صُممت هذه التقاسيم بـAI بالاعتماد على ما أرسلته، والخطأ وارد، فتنبّه."},
-    "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
-           "times_note": "The times next to each point show where it is explained in the recording.",
-           "summary": "Summary", "mindmap": "Classifications", "comparisons": "Comparison tables",
-           "glossary": "Glossary", "essay": "Essay questions", "model_answer": "Model answer",
-           "term": "Term", "arabic": "Arabic", "meaning": "Meaning", "mcq": "Multiple-choice questions",
-           "answers": "Answers", "question": "Question", "answer_expl": "Answer and explanation",
-           "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
-           "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ",
-           "processes": "Stages and steps", "back_to": "Then the cycle returns to:", "definition": "Definition",
-           "glossary_note": "", "transcript_note": "",
-           "visuals_warning": "These diagrams were made by AI from your lecture and may contain mistakes."},
 }
 
 
-
 def _dir(text: str) -> str:
-    """Questions of a lecture taught in English read left to right inside the Arabic page."""
+    """Text written in English (a question or a term) reads left to right inside the Arabic page."""
     latin = sum(c.isascii() and c.isalpha() for c in text)
     arabic = sum("\u0600" <= c <= "\u06ff" for c in text)
     return ' dir="ltr"' if latin > 2 * arabic else ""
+
+
+LATIN_LETTERS = "ABCDEFGHIJ"  # options of a question written in English
+
 
 def _letter(i: int, letters: str = LABELS["ar"]["letters"]) -> str:
     return letters[i] if i < len(letters) else str(i + 1)
@@ -227,14 +209,14 @@ def _questions(result: dict, L: dict, source_url: str) -> list[str]:
     if mcq:
         parts.append(f"<h2>{L['mcq']}</h2>")
         for i, q in enumerate(mcq, 1):
-            mark = (lambda j: _letter(j, LABELS["en"]["letters"])) if _dir(q["question"]) else letter
+            mark = (lambda j: _letter(j, LATIN_LETTERS)) if _dir(q["question"]) else letter
             opts = "".join(f'<li><span class="opt">({mark(j)})</span> {e(o)}</li>' for j, o in enumerate(q["options"]))
             parts.append(f'<div class="q"{_dir(q["question"])}><b>{i}. {e(q["question"])}</b><ul>{opts}</ul></div>')
         parts.append(f'<h3>{L["answers"]}</h3><table class="answers"><thead><tr><th>{L["question"]}</th>'
                      f'<th>{L["answer_expl"]}</th></tr></thead>')
         for i, q in enumerate(mcq, 1):
             ans = q["options"][q["answer_index"]]
-            mark = (lambda j: _letter(j, LABELS["en"]["letters"])) if _dir(q["question"]) else letter
+            mark = (lambda j: _letter(j, LATIN_LETTERS)) if _dir(q["question"]) else letter
             parts.append(f"<tr><td>{i}</td><td><b>({mark(q['answer_index'])}) {e(ans)}</b><br>{e(q.get('explanation', ''))} "
                          f"{_t(q.get('time', ''), source_url)}</td></tr>")
         parts.append("</table>")
@@ -312,20 +294,10 @@ def _transcript(paragraphs: list[Segment], L: dict, source_url: str, glossary: l
                    for p in paragraphs]
 
 
-def _page(parts: list[str], lang: str = "ar") -> str:
-    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/") + (CSS_EN if lang == "en" else "")
-    direction = "rtl" if lang == "ar" else "ltr"
-    return f'<!doctype html><html lang="{lang}" dir="{direction}"><head><meta charset="utf-8"><style>{css}</style>' \
+def _page(parts: list[str]) -> str:
+    css = CSS.replace("FONTS/", config.FONTS_DIR.as_uri() + "/")
+    return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>{css}</style>' \
            f'</head><body>{"".join(parts)}</body></html>'
-
-
-def build_html(result: dict, paragraphs: list[Segment], source_title: str = "", source_url: str = "",
-               duration: float = 0.0, lang: str = "ar") -> str:
-    """Everything in one document (the English version)."""
-    L = LABELS[lang]
-    return _page(_header(result, L, source_title, duration) + _summary(result, L, source_url)
-                 + _visuals(result, L, source_url, lang) + _glossary(result, L) + _questions(result, L, source_url)
-                 + _transcript(paragraphs, L, source_url), lang)
 
 
 # The files a student gets for each lecture, in the order they are sent.

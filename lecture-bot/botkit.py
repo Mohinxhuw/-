@@ -35,7 +35,7 @@ def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup([
         [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
         [button("💡 اشرح لي أبسط", f"simp:{lid}"), button("📖 المصطلحات", f"terms:{lid}")],
-        [button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
+        [button("⋯ المزيد", f"more:{lid}")],
     ])
 
 

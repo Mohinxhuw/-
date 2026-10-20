@@ -1,11 +1,8 @@
-"""Translating, exporting and sharing: English PDF, Word / Notion files, and share links for classmates."""
+"""Exporting and sharing: Word / Notion files, and share links for classmates."""
 import asyncio
-import shutil
-import tempfile
 import time
 import uuid
 from html import escape
-from pathlib import Path
 
 from telegram import InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -14,54 +11,12 @@ from telegram.error import TelegramError
 import bot_growth
 import bot_wallet
 import botkit
-from botkit import button, log
-from lecturebot import config, exports, library, pipeline, render, store, study
-from lecturebot.analyze import AnalysisError
+from botkit import button
+from lecturebot import config, exports, library, pipeline, store, study
 
 
 def _meta(context, lid: str) -> dict:
     return context.user_data.get("lectures", {}).get(lid, {})
-
-
-async def _resend(context, chat_id: int, file_id: str | None, kind: str, caption: str) -> bool:
-    if not file_id:
-        return False
-    try:
-        await context.bot.send_document(chat_id, file_id, caption=caption)
-        return True
-    except TelegramError:
-        return False
-
-
-# ---------- English version ----------
-
-async def on_english(update: Update, context, lid: str, lec: dict, extra: str) -> None:
-    chat, meta = update.effective_chat.id, _meta(context, lid)
-    caption = f"🌐 English version: {lec['title']}"
-    if await _resend(context, chat, meta.get("en_file_id"), "doc", caption):
-        return
-    if not await bot_wallet.require(context, chat, context.user_data, bot_wallet.ENGLISH, "النسخة الإنجليزية"):
-        return
-    status = await context.bot.send_message(chat, "🌐 أترجم الملخص والأسئلة إلى الإنجليزية… (دقيقة أو دقيقتان)")
-    work = Path(tempfile.mkdtemp(prefix="en_", dir=botkit.work_root()))
-    try:
-        en = await asyncio.to_thread(study.translate, lec)
-        html = render.build_html(en, [], duration=lec.get("duration") or 0, lang="en")
-        pdf = await asyncio.to_thread(render.write_pdf, html, work / (pipeline.safe_name(en.get("title") or "lecture")
-                                                                       + "-EN.pdf"))
-        with open(pdf, "rb") as fh:
-            sent = await context.bot.send_document(chat, fh, filename=pdf.name,
-                                                   caption=f"🌐 English version: {en.get('title') or lec['title']}\n"
-                                                           "(the full transcript stays in the Arabic PDF)")
-        if sent.document:
-            meta["en_file_id"] = sent.document.file_id
-        bot_wallet.charge(context, context.user_data, bot_wallet.ENGLISH, "النسخة الإنجليزية")
-        await status.delete()
-    except AnalysisError as e:
-        log.warning("translation failed: %s", e)
-        await status.edit_text("⚠️ تعذّرت الترجمة الآن. حاول بعد قليل.")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------- Word and Notion ----------
@@ -91,7 +46,6 @@ def copy_lecture(context, from_uid: int, lid: str, to_uid: int, sender_name: str
     to_ud = context.application.user_data[to_uid]
     new_lid = uuid.uuid4().hex[:8]
     full = dict(full, time=time.time(), shared_from=sender_name, course=None)
-    full.pop("en_file_id", None)
     store.put(to_uid, to_ud, new_lid, full)
     if course and course in library.courses(to_ud):
         to_ud["lectures"][new_lid]["course"] = course
@@ -203,6 +157,6 @@ def register(app) -> None:
     pass
 
 
-botkit.LECTURE_BUTTONS.update({"en": on_english, "docx": on_docx, "md": on_markdown, "share": on_share})
+botkit.LECTURE_BUTTONS.update({"docx": on_docx, "md": on_markdown, "share": on_share})
 botkit.BUTTONS.update({"unl": on_unlock})
 botkit.START_LINKS.update({"s": start_shared})
