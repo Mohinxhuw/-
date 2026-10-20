@@ -8,7 +8,14 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from . import mindmap
-from .render import LABELS, _letter
+from .render import LABELS, _letter, term_definition
+
+
+def _definition(g: dict) -> str:
+    text, src = term_definition(g)
+    if src:
+        return f"{text} (المصدر: {src.get('source') or src['url']} {src['url']})"
+    return text or "—"
 
 NAVY = RGBColor(0x14, 0x3F, 0x62)
 LETTERS = LABELS["ar"]["letters"]
@@ -119,8 +126,8 @@ def lecture_docx(lec: dict) -> bytes:
         d.table(c["headers"], c["rows"])
     if lec.get("glossary"):
         d.h("المصطلحات")
-        d.table(["المصطلح", "بالعربية", "المعنى"],
-                [[g.get("term", ""), g.get("arabic", ""), g.get("explanation", "")] for g in lec["glossary"]])
+        d.table(["المصطلح", "بالعربية", "التعريف"],
+                [[g.get("term", ""), g.get("arabic", ""), _definition(g)] for g in lec["glossary"]])
     if lec.get("mcq"):
         d.h("أسئلة الاختيار من متعدد")
         for i, q in enumerate(lec["mcq"], 1):
@@ -181,8 +188,8 @@ def lecture_markdown(lec: dict) -> str:
                 "|" + "---|" * len(c["headers"])]
         out += ["| " + " | ".join(_cell(x) for x in r) + " |" for r in c["rows"]] + [""]
     if lec.get("glossary"):
-        out += ["## المصطلحات", "", "| المصطلح | بالعربية | المعنى |", "|---|---|---|"]
-        out += [f"| {_cell(g.get('term', ''))} | {_cell(g.get('arabic', ''))} | {_cell(g.get('explanation', ''))} |"
+        out += ["## المصطلحات", "", "| المصطلح | بالعربية | التعريف |", "|---|---|---|"]
+        out += [f"| {_cell(g.get('term', ''))} | {_cell(g.get('arabic', ''))} | {_cell(_definition(g))} |"
                 for g in lec["glossary"]] + [""]
     if lec.get("mcq"):
         out += ["## أسئلة الاختيار من متعدد", ""]

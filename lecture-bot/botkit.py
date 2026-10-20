@@ -34,7 +34,7 @@ def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup
     """The buttons under a lecture's files."""
     return InlineKeyboardMarkup([
         [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
-        [button("💡 اشرح لي أبسط", f"simp:{lid}")],
+        [button("💡 اشرح لي أبسط", f"simp:{lid}"), button("📖 المصطلحات", f"terms:{lid}")],
         [button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
     ])
 

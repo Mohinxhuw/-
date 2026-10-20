@@ -217,7 +217,34 @@ async def generate_exam(update: Update, context, lids: list[str]) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
-# ---------- the glossary of a whole course, in one file ----------
+# ---------- glossaries: of one lecture, or of a whole course, each in one file ----------
+
+async def on_terms(update: Update, context, lid: str, lec: dict, extra: str) -> None:
+    chat, meta = update.effective_chat.id, context.user_data.get("lectures", {}).get(lid, {})
+    if not lec.get("glossary"):
+        await context.bot.send_message(chat, "لا توجد مصطلحات في هذه المحاضرة.")
+        return
+    caption = f"📖 مصطلحات «{lec.get('title', '')}»"
+    file_id = botkit.lecture_files(meta).get("glossary")
+    if file_id:
+        try:
+            await context.bot.send_document(chat, file_id, caption=caption)
+            return
+        except TelegramError:
+            pass
+    work = Path(tempfile.mkdtemp(prefix="terms_", dir=botkit.work_root()))
+    try:
+        html = render.build_files(lec, [], duration=lec.get("duration") or 0)["glossary"]
+        pdf = await asyncio.to_thread(render.write_pdf, html, work / f"المصطلحات - {pipeline.safe_name(lec.get('title', ''))}.pdf")
+        with open(pdf, "rb") as fh:
+            sent = await context.bot.send_document(chat, fh, filename=pdf.name, caption=caption)
+        if sent.document and meta.get("files"):
+            meta["files"]["glossary"] = sent.document.file_id
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+
 
 async def on_course_terms(update: Update, context, cid: str) -> None:
     ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
@@ -319,5 +346,5 @@ def register(app) -> None:
 
 
 botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "glos": on_course_terms})
-botkit.LECTURE_BUTTONS.update({"mv": on_move})
+botkit.LECTURE_BUTTONS.update({"mv": on_move, "terms": on_terms})
 botkit.TEXT_INPUTS.update({"search": input_search, "rename_course": input_rename, "new_course": input_new_course})

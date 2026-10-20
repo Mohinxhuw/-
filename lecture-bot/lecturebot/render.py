@@ -51,6 +51,17 @@ img.mindmap { max-width: 100%; max-height: 95mm; border: 0.6pt solid #cfd8e1; bo
              min-width: 14pt; text-align: center; margin-inline-end: 4pt; }
 .arrow { text-align: center; color: #e3b448; font-size: 12pt; line-height: 1.2; }
 .cycle { text-align: center; font-weight: 700; color: #143f62; }
+.warn { color: #c62828; font-size: 12pt; font-weight: 700; text-align: center; border: 1pt solid #c62828;
+        border-radius: 4pt; padding: 4pt 8pt; margin: 6pt 0 10pt; }
+.glossary td.term { font-weight: 700; width: 24%; }
+.glossary .lect { font-size: 8.5pt; color: #2e7d32; }
+.glossary .ext { font-size: 8.5pt; color: #7a5b00; }
+.glossary .none { color: #7a8796; }
+sup.fn { color: #7a5b00; font-weight: 700; }
+.footnotes { font-size: 9pt; border-top: 0.8pt solid #cfd8e1; margin-top: 10pt; padding-top: 4pt; }
+.footnotes a { color: #143f62; word-break: break-all; }
+.term-hl { color: #2e7d32; font-weight: 700; }
+.def-hl { background: #e6e9ed; border-radius: 2pt; }
 """
 
 # Left-to-right version of the stylesheet for the English PDF.
@@ -72,7 +83,12 @@ LABELS = {
            "answers": "الإجابات", "question": "السؤال", "answer_expl": "الإجابة والشرح", "tf": "أسئلة صح أو خطأ",
            "true": "صح", "false": "خطأ", "cards": "بطاقات المراجعة", "card_q": "السؤال", "card_a": "الجواب",
            "transcript": "النص الكامل", "letters": "أبجدهوزحطي",
-           "processes": "المراحل والخطوات", "back_to": "ثم تعود الدورة إلى:"},
+           "processes": "المراحل والخطوات", "back_to": "ثم تعود الدورة إلى:", "definition": "التعريف",
+           "from_lecturer": "تعريف المحاضر", "from_source": "من مصدر خارجي موثوق (المرجع في الحاشية)",
+           "sources": "المراجع", "glossary_note": "تعريف المحاضر مكتوب كما ذكره. وما لم يعرّفه نُقل تعريفه من "
+           "مصدر موثوق ومرجعه في الحاشية، وما لم يُعثر له على تعريف موثوق وُضع أمامه خط.",
+           "transcript_note": "المصطلحات ملوّنة بالأخضر، وتعريف المحاضر لها مظلَّل بالرمادي.",
+           "visuals_warning": "صُممت هذه التقاسيم بـAI بالاعتماد على ما أرسلته، والخطأ وارد، فتنبّه."},
     "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
            "times_note": "The times next to each point show where it is explained in the recording.",
            "summary": "Summary", "mindmap": "Classifications", "comparisons": "Comparison tables",
@@ -81,7 +97,10 @@ LABELS = {
            "answers": "Answers", "question": "Question", "answer_expl": "Answer and explanation",
            "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
            "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ",
-           "processes": "Stages and steps", "back_to": "Then the cycle returns to:"},
+           "processes": "Stages and steps", "back_to": "Then the cycle returns to:", "definition": "Definition",
+           "from_lecturer": "The lecturer's definition", "from_source": "From a trusted source (see the notes)",
+           "sources": "Sources", "glossary_note": "", "transcript_note": "",
+           "visuals_warning": "These diagrams were made by AI from your lecture and may contain mistakes."},
 }
 
 
@@ -167,15 +186,40 @@ def _visuals(result: dict, L: dict, source_url: str, lang: str) -> list[str]:
     return parts
 
 
-def _glossary(result: dict, L: dict) -> list[str]:
-    e, parts = escape, []
-    if result.get("glossary"):
-        parts.append(f"<h2>{L['glossary']}</h2><table><thead><tr><th>{L['term']}</th><th>{L['arabic']}</th>"
-                     f"<th>{L['meaning']}</th></tr></thead>")
-        for g in result["glossary"]:
-            parts.append(f'<tr><td class="en">{e(g.get("term", ""))}</td><td>{e(g.get("arabic", ""))}</td>'
-                         f'<td>{e(g.get("explanation", ""))}</td></tr>')
-        parts.append("</table>")
+def term_definition(g: dict) -> tuple[str, dict | None]:
+    """(definition, source) of a glossary term: the lecturer's own, or one copied from a trusted
+    source (with that source), or ("", None) when neither was found."""
+    if g.get("explanation"):
+        return g["explanation"], None
+    src = g.get("source_definition") or {}
+    return (src["text"], src) if src.get("text") else ("", None)
+
+
+def _glossary(result: dict, L: dict, source_url: str = "") -> list[str]:
+    e, parts, notes = escape, [], []
+    glossary = result.get("glossary") or []
+    if not glossary:
+        return parts
+    with_arabic = any(g.get("arabic") for g in glossary)
+    head = f"<th>{L['term']}</th>" + (f"<th>{L['arabic']}</th>" if with_arabic else "") + f"<th>{L['definition']}</th>"
+    parts.append(f'<h2>{L["glossary"]}</h2><div class="cover-note">{L["glossary_note"]}</div>'
+                 f'<table class="glossary"><thead><tr>{head}</tr></thead>')
+    for g in glossary:
+        text, src = term_definition(g)
+        if src:
+            notes.append(src)
+            cell = f'{e(text)}<sup class="fn">{len(notes)}</sup><div class="ext">{L["from_source"]}</div>'
+        elif text:
+            cell = f'{e(text)} {_t(g.get("time", ""), source_url)}<div class="lect">{L["from_lecturer"]}</div>'
+        else:
+            cell = '<span class="none">—</span>'
+        parts.append(f'<tr><td class="term"{_dir(g.get("term", ""))}>{e(g.get("term", ""))}</td>'
+                     + (f'<td>{e(g.get("arabic", ""))}</td>' if with_arabic else "") + f"<td>{cell}</td></tr>")
+    parts.append("</table>")
+    if notes:
+        parts.append(f'<div class="footnotes"><b>{L["sources"]}</b><ol>'
+                     + "".join(f'<li>{e(n.get("source") or n["url"])}: <a href="{e(n["url"])}">{e(n["url"])}</a></li>'
+                               for n in notes) + "</ol></div>")
     return parts
 
 
@@ -230,11 +274,45 @@ def _questions(result: dict, L: dict, source_url: str) -> list[str]:
     return parts
 
 
-def _transcript(paragraphs: list[Segment], L: dict, source_url: str) -> list[str]:
+def _marked(text: str, terms: list[str], quotes: list[str]) -> str:
+    """The paragraph with the lecture's terms in green and the lecturer's definitions shaded."""
+    low = text.lower()
+    shade, green = [False] * len(text), [False] * len(text)
+    for q in quotes:
+        i = text.find(q)
+        if i >= 0:
+            shade[i:i + len(q)] = [True] * len(q)
+    for t in terms:
+        i = low.find(t)
+        while i >= 0:
+            green[i:i + len(t)] = [True] * len(t)
+            i = low.find(t, i + len(t))
+    out, i = [], 0
+    while i < len(text):
+        j = i
+        while j < len(text) and (shade[j], green[j]) == (shade[i], green[i]):
+            j += 1
+        chunk = escape(text[i:j])
+        if green[i]:
+            chunk = f'<span class="term-hl">{chunk}</span>'
+        if shade[i]:
+            chunk = f'<span class="def-hl">{chunk}</span>'
+        out.append(chunk)
+        i = j
+    return "".join(out)
+
+
+def _transcript(paragraphs: list[Segment], L: dict, source_url: str, glossary: list | None = None) -> list[str]:
     if not paragraphs:
         return []
-    return [f"<h2>{L['transcript']}</h2>"] + [f'<p class="para">{_t(fmt_time(p.start), source_url)} {escape(p.text)}</p>'
-                                             for p in paragraphs]
+    terms = sorted({(g.get("term") or "").strip().lower() for g in glossary or []} - {""}, key=len, reverse=True)
+    terms = [t for t in terms if len(t) >= 3]
+    quotes = [g["definition_quote"].strip() for g in glossary or [] if (g.get("definition_quote") or "").strip()]
+    head = [f"<h2>{L['transcript']}</h2>"]
+    if terms:
+        head.append(f'<div class="cover-note">{L["transcript_note"]}</div>')
+    return head + [f'<p class="para">{_t(fmt_time(p.start), source_url)} {_marked(p.text, terms, quotes)}</p>'
+                   for p in paragraphs]
 
 
 def _page(parts: list[str], lang: str = "ar") -> str:
@@ -261,10 +339,12 @@ def build_files(result: dict, paragraphs: list[Segment], source_title: str = "",
                 duration: float = 0.0) -> dict[str, str]:
     """kind -> HTML of each file the lecture has content for (see FILES)."""
     L = LABELS["ar"]
-    bodies = {"summary": _summary(result, L, source_url) + _transcript(paragraphs, L, source_url),
+    visuals = _visuals(result, L, source_url, "ar")
+    bodies = {"summary": _summary(result, L, source_url) + _transcript(paragraphs, L, source_url,
+                                                                       result.get("glossary")),
               "questions": _questions(result, L, source_url),
-              "glossary": _glossary(result, L),
-              "visuals": _visuals(result, L, source_url, "ar")}
+              "glossary": _glossary(result, L, source_url),
+              "visuals": [f'<div class="warn">{L["visuals_warning"]}</div>'] + visuals if visuals else []}
     names = dict(FILES)
     return {kind: _page(_header(result, L, source_title, duration, names[kind]) + body)
             for kind, body in bodies.items() if body}

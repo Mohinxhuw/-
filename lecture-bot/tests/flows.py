@@ -89,7 +89,11 @@ class FakeTelegram(BaseRequest):
 ANALYSIS = {
     "title": "التنفس الخلوي", "subject": "أحياء", "overview": "نبذة",
     "sections": [{"heading": "التحلل السكري", "time": "00:05", "points": [{"text": "في Cytoplasm", "time": "00:06"}]}],
-    "glossary": [{"term": "ATP", "arabic": "أدينوسين", "explanation": "طاقة"}],
+    "glossary": [{"term": "ATP", "arabic": "أدينوسين", "defined_by_lecturer": True, "explanation": "جزيء الطاقة",
+                  "definition_quote": "التحلل السكري", "time": "00:30"},
+                 {"term": "الميتوكوندريا", "arabic": "", "defined_by_lecturer": False, "explanation": "",
+                  "definition_quote": "", "time": "00:00",
+                  "source_definition": {"text": "عضية تنتج الطاقة", "source": "MSD", "url": "https://msdmanuals.com/x"}}],
     "mcq": [{"question": "أين يحدث كربس؟", "options": ["النواة", "الميتوكوندريا"], "answer_index": 1,
              "explanation": "", "time": "01:00"}],
     "true_false": [{"statement": "التحلل في النواة", "answer": False, "explanation": "", "time": "00:30",
@@ -227,8 +231,8 @@ async def main():
 
         # buttons under the files: no buttons for what the files already hold
         kb = last(A, "حُفظت في مادة")["buttons"]
-        assert f"quiz:{lid}" in kb and not any(b.startswith(("div:", "txt:", "terms:", "tpaper:")) for b in kb), kb
-        for action in ("en", "en", "docx", "md", "more", "simp"):
+        assert f"terms:{lid}" in kb and not any(b.startswith(("div:", "txt:", "tpaper:")) for b in kb), kb
+        for action in ("en", "en", "docx", "md", "more", "simp", "terms"):
             await send(press(A, f"{action}:{lid}"))
         assert ud["lectures"][lid]["en_file_id"].startswith("doc"), "English cached"
 
@@ -385,7 +389,7 @@ async def main():
         elid = max(app.user_data[A]["lectures"], key=lambda k: app.user_data[A]["lectures"][k]["time"])
         ecid = app.user_data[A]["lectures"][elid]["course"]
         await send(press(A, f"glos:{ecid}"))
-        assert "مصطلح واحد" in last(A, "📖 مصطلحات مادة")["caption"]
+        assert "مصطلحان" in last(A, "📖 مصطلحات مادة")["caption"]
 
         # a lecture saved before the files were split gets all its files when opened from the library
         meta = app.user_data[A]["lectures"][elid]

@@ -27,6 +27,10 @@ CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "high")
 # The practice questions are written by a cheaper model, then checked by CLAUDE_MODEL before students see
 # them. Set QUESTIONS_MODEL to the same model as CLAUDE_MODEL to write everything with it (no review step then).
 QUESTIONS_MODEL = os.environ.get("QUESTIONS_MODEL", "claude-sonnet-5-5")
+# Terms the lecturer did not define are looked up on trusted sites (with the source in a footnote).
+DEFINE_TERMS = _bool("DEFINE_TERMS", True)
+DEFINE_TERMS_MAX = int(os.environ.get("DEFINE_TERMS_MAX", "25"))
+DEFINE_EFFORT = os.environ.get("DEFINE_EFFORT", "medium")
 REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "medium")
 REVIEW_ALWAYS = _bool("REVIEW_ALWAYS")
 

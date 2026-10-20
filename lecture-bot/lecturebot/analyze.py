@@ -30,6 +30,25 @@ MAJOR_NAMES = {
 }
 
 
+# Trusted sources per discipline: definitions the lecturer did not give are looked up only on these sites.
+FIELDS = {
+    "sharia": ["dorar.net", "shamela.ws", "islamweb.net", "islamqa.info", "binbaz.org.sa", "binothaimeen.net",
+               "alifta.gov.sa", "alukah.net"],
+    "medicine": ["msdmanuals.com", "ncbi.nlm.nih.gov", "medlineplus.gov", "who.int", "nhs.uk", "cdc.gov",
+                 "mayoclinic.org", "britannica.com"],
+    "science": ["britannica.com", "ncbi.nlm.nih.gov", "nature.com", "iupac.org", "nasa.gov", "nist.gov",
+                "khanacademy.org"],
+    "engineering": ["britannica.com", "nist.gov", "ieee.org", "sciencedirect.com", "engineeringtoolbox.com"],
+    "computing": ["developer.mozilla.org", "docs.python.org", "learn.microsoft.com", "ieee.org", "acm.org",
+                  "nist.gov", "britannica.com"],
+    "business": ["investopedia.com", "ifrs.org", "imf.org", "worldbank.org", "sama.gov.sa", "britannica.com"],
+    "law": ["laws.boe.gov.sa", "moj.gov.sa", "law.cornell.edu", "un.org", "britannica.com"],
+    "language": ["shamela.ws", "almaany.com", "dorar.net", "britannica.com", "dictionary.cambridge.org",
+                 "merriam-webster.com", "oxfordlearnersdictionaries.com"],
+    "general": ["britannica.com", "shamela.ws", "ncbi.nlm.nih.gov", "who.int", "un.org"],
+}
+
+
 def _obj(props: dict) -> dict:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
@@ -43,14 +62,16 @@ PROPS = {
     "overview": _S,
     "sections": {"type": "array", "items": _obj({
         "heading": _S, "time": _T, "points": {"type": "array", "items": _obj({"text": _S, "time": _T})}})},
-    "glossary": {"type": "array", "items": _obj({"term": _S, "arabic": _S, "explanation": _S})},
+    "field": {"type": "string", "enum": list(FIELDS)},
+    "glossary": {"type": "array", "items": _obj({"term": _S, "arabic": _S, "defined_by_lecturer": {"type": "boolean"},
+                                                 "explanation": _S, "definition_quote": _S, "time": _T})},
     "divisions": {"type": "array", "items": _obj({
-        "title": _S, "center": _S, "time": _T,
+        "title": _S, "center": _S, "time": _T, "evidence": _S,
         "branches": {"type": "array", "items": _obj({"label": _S, "children": _LIST_S})}})},
     "processes": {"type": "array", "items": _obj({
-        "title": _S, "steps": _LIST_S, "cyclic": {"type": "boolean"}, "time": _T})},
+        "title": _S, "steps": _LIST_S, "cyclic": {"type": "boolean"}, "time": _T, "evidence": _S})},
     "comparisons": {"type": "array", "items": _obj({
-        "title": _S, "headers": _LIST_S, "rows": {"type": "array", "items": _LIST_S}, "time": _T})},
+        "title": _S, "headers": _LIST_S, "rows": {"type": "array", "items": _LIST_S}, "time": _T, "evidence": _S})},
     "transcript_fixes": {"type": "array", "items": _obj({"wrong": _S, "right": _S})},
     "mcq": {"type": "array", "items": _obj({
         "question": _S, "options": _LIST_S, "answer_index": {"type": "integer"}, "explanation": _S, "time": _T,
@@ -62,7 +83,7 @@ PROPS = {
     "flashcards": {"type": "array", "items": _obj({"front": _S, "back": _S})},
 }
 
-NOTES_KEYS = ("title", "subject", "overview", "sections", "glossary", "divisions", "processes", "comparisons",
+NOTES_KEYS = ("title", "subject", "field", "overview", "sections", "glossary", "divisions", "processes", "comparisons",
               "transcript_fixes")
 QUESTION_KEYS = ("mcq", "true_false", "essay", "flashcards")
 NOTES_SCHEMA = _obj({k: PROPS[k] for k in NOTES_KEYS})
@@ -99,29 +120,40 @@ NOTES_SYSTEM = f"""You write the study notes for a recorded Arabic university le
 {COMMON}
 
 Fields:
-- title: a short title for the lecture. subject: the course or field it belongs to.
+- title: a short title for the lecture. subject: the course or field it belongs to. field: the \
+discipline, one of: sharia (Islamic sciences), medicine, science, engineering, computing, business, \
+law, language (Arabic or other languages and literature), general.
 - overview: 2 to 4 sentences on what the lecture covers.
 - sections: follow the lecture's own order of ideas. Each section has a heading, the time it starts, \
 and the key points as short sentences a student can revise from. Cover every idea the lecturer \
 taught, including definitions, steps, lists, formulas and examples.
-- glossary: the technical terms of the lecture, each with the term as used, its Arabic equivalent and \
-a one-sentence explanation as the lecturer explained it.
+- glossary: every technical term of the lecture. term: exactly as the lecturer used it. arabic: its \
+Arabic equivalent, only when the term is not Arabic; otherwise an empty string. defined_by_lecturer: \
+true only when the lecturer stated what the term means. explanation: that definition, faithful to the \
+lecturer's words; an empty string when the lecturer did not define the term. Never define a term \
+from your own knowledge: definitions the lecturer did not give are looked up separately in trusted \
+sources. definition_quote: the lecturer's defining words copied exactly from the transcript (one \
+sentence or a short passage, without the timestamp); an empty string when the term was not defined. \
+time: where it is defined, or first used.
 - divisions: only the classifications the lecturer explicitly made: when they say that something is \
 divided into, has types, kinds, parts, stages or categories, and name them. For each one: title (for \
 example "أقسام المياه"), center (the thing being divided, 1 to 4 words), branches (exactly the parts the \
 lecturer named, in their order, each label 1 to 6 words, with children: the sub-parts the lecturer \
 named for it, or one short description from the lecture; an empty list if neither) and time. Never \
 turn the outline of the lecture into a division, and never create parts the lecturer did not state. \
-Use an empty list when the lecture has no explicit classification.
+evidence: the lecturer's words stating this classification, copied exactly from the transcript (at \
+most 30 words, without the timestamp). Use an empty list when the lecture has no explicit classification.
 - processes: only ordered steps or stages the lecturer explicitly described in sequence (a mechanism, a \
 procedure, a pathway, a cycle, the stages of a disease or of a method): title, steps (exactly the steps \
 the lecturer named, in their order, each 2 to 15 words), cyclic (true only when the lecturer said the \
-last step leads back to the first) and time. Never invent or reorder steps. Use an empty list when the \
+last step leads back to the first), time, and evidence (the lecturer's words stating the sequence, \
+copied exactly from the transcript, at most 30 words). Never invent or reorder steps. Use an empty list when the \
 lecture describes no sequence.
 - comparisons: a table for each comparison the lecturer made between two or more things. headers: \
 the first is the aspect being compared, the others are the things compared (2 to 4). Each row starts \
 with the aspect, followed by one short cell per compared thing, 3 to 8 rows. Only aspects the lecturer \
-discussed. Use an empty list when the lecture compares nothing.
+discussed. evidence: the lecturer's words making the comparison, copied exactly from the transcript (at \
+most 30 words). Use an empty list when the lecture compares nothing.
 - transcript_fixes: words the recognizer got clearly wrong that matter for studying, mostly English \
 terms written in Arabic letters, mapped to the correct spelling. Only fixes you are sure of; each \
 "wrong" value must appear exactly as written in the transcript.
@@ -304,6 +336,11 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     sections = _SectionStream(on_section) if on_section else None
     result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, sections.feed if sections else None, model=model)
     add_usage(usage, u)
+    if not result.get("sections"):  # a summary file without a summary is worthless: try once more
+        result, u = _call(NOTES_SYSTEM, content, NOTES_SCHEMA, model=model)
+        add_usage(usage, u)
+        if not result.get("sections"):
+            raise AnalysisError("The notes came back without a summary")
     worker.join()
     if failure:
         raise failure[0] if isinstance(failure[0], AnalysisError) else AnalysisError(str(failure[0]))
@@ -313,8 +350,90 @@ def analyze(segments: list[Segment], major: str | None = None, images: list[tupl
     _clean(result, source_text)
     if (questions_model or model) != (model or config.CLAUDE_MODEL) or config.REVIEW_ALWAYS:
         add_usage(usage, _review(result, model))
+    if config.DEFINE_TERMS:
+        add_usage(usage, define_terms(result, model))
     result["_usage"] = usage
     return result
+
+
+DEFINE_SYSTEM = """You find definitions of technical terms in trusted reference sources, for university \
+students. The lecturer used these terms without defining them.
+
+For each term, search the web (only the trusted sites are available to you) and find where a source \
+defines it, in the sense of the course and the lecture given to you. Prefer Arabic sources when the \
+term is Arabic.
+
+Rules:
+- definition: copy the source's own words exactly, one to three sentences (at most 60 words). Do not \
+paraphrase, translate, summarise or combine sources.
+- url: the exact address of the search result the definition is copied from. source: the name of the \
+site or book, for example "الدرر السنية" or "MSD Manual".
+- If you cannot find a definition of the term in this sense in the results, give an empty definition, \
+url and source. Never write a definition from your own knowledge: an empty answer is better than one \
+without a source.
+
+When you are done, reply with only a JSON array, no other text:
+[{"term": "...", "definition": "...", "source": "...", "url": "..."}]"""
+
+
+WEB_SEARCH_DOLLARS = 0.01  # $10 per 1,000 searches
+
+
+def _norm_url(url: str) -> str:
+    return (url or "").split("#")[0].rstrip("/").replace("http://", "https://").replace("://www.", "://")
+
+
+def define_terms(result: dict, model: str | None = None) -> dict:
+    """Look up, on the trusted sites of the lecture's field, the terms the lecturer did not define.
+    A definition is kept only when its url is one the search actually returned. Returns the usage."""
+    terms = [g for g in result.get("glossary", []) if not g.get("explanation") and g.get("term")]
+    terms = terms[: config.DEFINE_TERMS_MAX]
+    if not terms:
+        return {}
+    domains = FIELDS.get(result.get("field") or "general", FIELDS["general"])
+    model = model or config.CLAUDE_MODEL
+    ask = (f"المادة: {result.get('subject', '')}\nعنوان المحاضرة: {result.get('title', '')}\n"
+           f"نبذة: {result.get('overview', '')}\n\nالمصطلحات:\n" + "\n".join(f"- {g['term']}" for g in terms))
+    messages = [{"role": "user", "content": ask}]
+    client = anthropic.Anthropic()
+    usage, found_urls, text = {}, set(), ""
+    try:
+        for _ in range(4):  # the server's search loop can pause; resume it a few times
+            message = client.beta.messages.create(
+                model=model, max_tokens=16000, system=DEFINE_SYSTEM, messages=messages,
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+                tools=[{"type": "web_search_20260209", "name": "web_search", "allowed_domains": domains,
+                        "max_uses": min(40, 2 * len(terms))}],
+                output_config={"effort": config.DEFINE_EFFORT})
+            u = cost_of(message.usage, getattr(message, "model", None) or model)
+            searches = getattr(getattr(message.usage, "server_tool_use", None), "web_search_requests", 0) or 0
+            u["cost"] = round(u["cost"] + searches * WEB_SEARCH_DOLLARS, 4)
+            add_usage(usage, u)
+            for block in message.content:
+                if block.type == "web_search_tool_result" and isinstance(block.content, list):
+                    found_urls |= {_norm_url(r.url) for r in block.content if getattr(r, "url", None)}
+                elif block.type == "text":
+                    text += block.text
+            if message.stop_reason != "pause_turn":
+                break
+            messages = messages[:1] + [{"role": "assistant", "content": message.content}]
+            text = ""
+    except (anthropic.APIError, ValueError) as e:  # definitions are extra: the lecture goes out without them
+        import logging
+        logging.getLogger(__name__).warning("term lookup skipped: %s", e)
+        return usage
+    start, end = text.find("["), text.rfind("]")
+    try:
+        answers = json.loads(text[start:end + 1]) if start >= 0 else []
+    except json.JSONDecodeError:
+        answers = []
+    by_term = {(a.get("term") or "").strip(): a for a in answers if isinstance(a, dict)}
+    for g in terms:
+        a = by_term.get(g["term"].strip()) or {}
+        if a.get("definition") and _norm_url(a.get("url", "")) in found_urls:
+            g["source_definition"] = {"text": a["definition"].strip(), "source": (a.get("source") or "").strip(),
+                                      "url": a["url"].strip()}
+    return usage
 
 
 def _review(result: dict, model: str | None) -> dict:
@@ -454,11 +573,18 @@ def _clean(result: dict, transcript: str) -> None:
         if n >= 2 and rows:
             c["rows"] = rows
             comps.append(c)
-    result["comparisons"] = comps
-    result["divisions"] = [d for d in result.get("divisions", []) if len(d.get("branches", [])) >= 2]
+    result["comparisons"] = [c for c in comps if supported(c.get("evidence", ""), tw)]
+    result["divisions"] = [d for d in result.get("divisions", []) if len(d.get("branches", [])) >= 2
+                           and supported(d.get("evidence", ""), tw)]
+    result["processes"] = [p for p in result.get("processes", []) if len(p.get("steps", [])) >= 2
+                           and supported(p.get("evidence", ""), tw)]
+    # A definition only counts as the lecturer's when his words are really in the transcript.
+    for g in result.get("glossary", []):
+        if not g.get("defined_by_lecturer") or not supported(g.get("definition_quote", ""), tw):
+            g["defined_by_lecturer"], g["explanation"], g["definition_quote"] = False, "", ""
     # The model sometimes copies the transcript's "[mm:ss]" brackets into time fields.
     items = (result.get("sections", []) + result["mcq"] + result["true_false"] + result["essay"] + comps
-             + result["divisions"] + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])])
+             + result["divisions"] + result["processes"] + result.get("glossary", []) + [pt for sec in result.get("sections", []) for pt in sec.get("points", [])])
     for item in items:
         if isinstance(item.get("time"), str):
             item["time"] = item["time"].strip(" []")
