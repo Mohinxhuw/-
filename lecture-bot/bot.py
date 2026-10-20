@@ -406,6 +406,14 @@ async def _clear_collector(context, chat_id: int, user_id: int) -> None:
             pass
 
 
+def _why(e: Exception) -> str:
+    """A plain explanation, for the owner, of the failures that need them to act."""
+    if "credit balance" in str(e):
+        return ("💳 نفد رصيد حسابك في Anthropic، فتوقف البوت عن كتابة الملخصات.\n"
+                "اشحنه من console.anthropic.com ← Settings ← Billing، ثم أعد إرسال المحاضرة.\n\n")
+    return ""
+
+
 async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
     global _waiting
     ud = context.user_data
@@ -506,7 +514,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
     except AnalysisError as e:
         log.warning("analysis failed: %s", e)
         await status.edit_text("⚠️ تعذّر كتابة الملخص هذه المرة. أعد إرسال المحاضرة بعد قليل.")
-        await bot_growth.tell_owner(context, f"⚠️ تعذّر كتابة ملخص محاضرة لطالب ({user_id}):\n{str(e)[:1500]}")
+        await bot_growth.tell_owner(context, _why(e) + f"⚠️ تعذّر كتابة ملخص محاضرة لطالب ({user_id}):\n{str(e)[:1500]}")
     except Exception:
         log.exception("job failed")
         await status.edit_text("⚠️ حدث خطأ أثناء المعالجة. تأكد أن الملف تسجيل صوتي أو فيديو، ثم أعد المحاولة.")
@@ -548,7 +556,7 @@ async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
     except AnalysisError as e:
         log.warning("files analysis failed: %s", e)
         await status.edit_text("⚠️ تعذّر كتابة الملخص هذه المرة. أعد المحاولة بعد قليل.")
-        await bot_growth.tell_owner(context, f"⚠️ تعذّر تلخيص ملفات لطالب ({user_id}):\n{str(e)[:1500]}")
+        await bot_growth.tell_owner(context, _why(e) + f"⚠️ تعذّر تلخيص ملفات لطالب ({user_id}):\n{str(e)[:1500]}")
     except Exception:
         log.exception("files job failed")
         await status.edit_text("⚠️ حدث خطأ أثناء قراءة الملفات. أعد المحاولة.")
