@@ -1,4 +1,4 @@
-"""Organisation: the student's library by course, search, exam dates, study plans and the daily reminder."""
+"""Organisation: the student's library by course, search, and the daily reminder."""
 import asyncio
 import datetime as dt
 import shutil
@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import CommandHandler, ContextTypes
 
@@ -27,10 +27,8 @@ def _today() -> dt.date:
     return study.today()
 
 
-def _course_label(c: dict, n: int, today: dt.date) -> str:
-    left = library.days_left(c, today)
-    tail = f" · ⏳ {library.countdown_text(left)}" if left is not None and left >= 0 else ""
-    return f"📁 {c['name']} ({n}){tail}"
+def _course_label(c: dict, n: int) -> str:
+    return f"📁 {c['name']} ({n})"
 
 
 async def _show(update: Update, context, text: str, rows: list) -> None:
@@ -53,11 +51,11 @@ async def library_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def _home(update: Update, context) -> None:
-    ud, today = context.user_data, _today()
+    ud = context.user_data
     if not ud.get("lectures"):
         await _show(update, context, "📚 مكتبتك فارغة. أرسل تسجيل محاضرة، وأحفظها لك هنا مرتبة بالمواد.", [])
         return
-    rows = [[button(_course_label(c, len(library.course_lectures(ud, cid)), today), f"lib:c:{cid}")]
+    rows = [[button(_course_label(c, len(library.course_lectures(ud, cid))), f"lib:c:{cid}")]
             for cid, c in library.courses(ud).items() if library.course_lectures(ud, cid)]
     loose = library.unfiled(ud)
     if loose:
@@ -77,20 +75,11 @@ async def _course(update: Update, context, cid: str) -> None:
         return
     lids = library.course_lectures(ud, cid)
     lectures = ud["lectures"]
-    planned_done = {l for day in c.get("plan", []) if day["done"] for l in day["lids"]}
     lines = [f"📁 <b>{escape(c['name'])}</b> · {_lectures(len(lids))}"]
     if c.get("readiness"):
         r = c["readiness"]
         lines.append(f"📈 جاهزيتك: {r['pct']}% (آخر محاكاة {library.day_name(dt.date.fromisoformat(r['date']), today)})")
-    left = library.days_left(c, today)
-    if left is not None and left >= 0:
-        exam = dt.date.fromisoformat(c["exam"])
-        lines.append(f"📅 الاختبار {library.day_name(exam, today)} · ⏳ {library.countdown_text(left)}")
-        if c.get("plan"):
-            lines.append(f"✅ راجعت {len([l for l in lids if l in planned_done])} من {len(lids)} حسب الخطة")
-    rows = [[button(("✅ " if l in planned_done else "📄 ") + (lectures[l].get("title") or "محاضرة")[:55], f"lib:l:{l}")]
-            for l in lids[-25:]]
-    rows.append([button("📅 موعد الاختبار", f"lib:date:{cid}"), button("🗓 خطة المذاكرة", f"lib:plan:{cid}")])
+    rows = [[button("📄 " + (lectures[l].get("title") or "محاضرة")[:55], f"lib:l:{l}")] for l in lids[-25:]]
     rows.append([button("🧪 اختبار شامل للمادة", f"cq:{cid}"), button("🌙 ملخص ليلة الاختبار", f"lib:exam:{cid}")])
     rows.append([button("⏱ محاكاة الاختبار", f"sim:{cid}"), button("📖 مصطلحات المادة", f"glos:{cid}")])
     rows.append([button("✏️ إعادة التسمية", f"lib:ren:{cid}")])
@@ -107,7 +96,7 @@ async def _unfiled(update: Update, context) -> None:
 
 
 async def _lecture(update: Update, context, lid: str) -> None:
-    ud, chat = context.user_data, update.effective_chat.id
+    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
     meta = ud.get("lectures", {}).get(lid)
     if not meta:
         await context.bot.send_message(chat, "لم أعد أحتفظ بهذه المحاضرة.")
@@ -116,8 +105,23 @@ async def _lecture(update: Update, context, lid: str) -> None:
     course = library.courses(ud).get(meta.get("course"), {}).get("name", "بلا مادة")
     dur = f" · {botkit.minutes(meta['duration'])}" if meta.get("duration") else ""
     caption = f"📄 {meta.get('title', '')}\n📁 {course} · {when}{dur}"
-    if not await botkit.send_lecture(context, chat, ud, lid, caption):
+    if "questions" in botkit.lecture_files(meta) and await botkit.send_lecture(context, chat, ud, lid, caption):
+        return
+    # Saved before the lecture's files were split, or its files are gone: make them again from what is stored.
+    lec = store.get(uid, ud, lid)
+    if not lec:
         await context.bot.send_message(chat, caption, reply_markup=botkit.lecture_keyboard(lid, meta))
+        return
+    await context.bot.send_chat_action(chat, ChatAction.UPLOAD_DOCUMENT)
+    work = Path(tempfile.mkdtemp(prefix="files_", dir=botkit.work_root()))
+    try:
+        paths = await asyncio.to_thread(pipeline.write_files, lec, pipeline.paragraphs_of(lec.get("transcript", "")),
+                                        work, "", lec.get("source_url", ""), lec.get("duration") or 0)
+        ids = await botkit.send_files(context, chat, paths, caption, botkit.lecture_keyboard(lid, meta))
+        if ids:
+            meta["files"], meta["pdf_file_id"] = ids, ids.get("summary")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 async def on_lib(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
@@ -134,12 +138,6 @@ async def on_lib(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -
     elif step == "find":
         botkit.expect(ud, "search")
         await context.bot.send_message(update.effective_chat.id, "🔍 اكتب الكلمة أو العبارة التي تبحث عنها:")
-    elif step == "date":
-        botkit.expect(ud, "exam_date", value)
-        await context.bot.send_message(update.effective_chat.id,
-                                       "📅 متى اختبار هذه المادة؟ اكتب التاريخ مثل 20/11 أو 2026-11-20، أو «بعد 10 أيام».")
-    elif step == "plan":
-        await _plan(update, context, value, rebuild=True)
     elif step == "ren":
         botkit.expect(ud, "rename_course", value)
         await context.bot.send_message(update.effective_chat.id, "✏️ اكتب الاسم الجديد للمادة:")
@@ -188,72 +186,6 @@ async def input_rename(update: Update, context, cid: str) -> None:
                                                   reply_markup=InlineKeyboardMarkup([[button("📂 افتح المادة", f"lib:c:{cid}")]]))
 
 
-# ---------- exam date and study plan ----------
-
-async def input_exam_date(update: Update, context, cid: str) -> None:
-    ud, today = context.user_data, _today()
-    c = library.courses(ud).get(cid)
-    if not c:
-        return
-    d = library.parse_date(update.effective_message.text, today)
-    if not d or d < today:
-        botkit.expect(ud, "exam_date", cid)
-        await update.effective_message.reply_text("لم أفهم التاريخ. اكتبه مثل 20/11 أو 2026-11-20، أو «بعد 10 أيام».")
-        return
-    c["exam"] = d.isoformat()
-    c["plan"] = library.make_plan(library.course_lectures(ud, cid), d, today)
-    await update.effective_message.reply_text(
-        f"📅 سجّلت اختبار «{c['name']}» {library.day_name(d, today)} ({d.isoformat()}) · "
-        f"⏳ {library.countdown_text((d - today).days)}.\nوجهّزت لك خطة مذاكرة، وأذكّرك بمهمة كل يوم.")
-    await _plan(update, context, cid, rebuild=False)
-
-
-async def _plan(update: Update, context, cid: str, rebuild: bool) -> None:
-    ud, today, chat = context.user_data, _today(), update.effective_chat.id
-    c = library.courses(ud).get(cid)
-    if not c:
-        return
-    if not c.get("exam"):
-        botkit.expect(ud, "exam_date", cid)
-        await context.bot.send_message(chat, "🗓 لأجهّز خطة المذاكرة أحتاج موعد الاختبار. متى هو؟ (مثل 20/11)")
-        return
-    exam = dt.date.fromisoformat(c["exam"])
-    if exam < today:
-        await context.bot.send_message(chat, "انتهى موعد اختبار هذه المادة. سجّل موعداً جديداً من «📅 موعد الاختبار».")
-        return
-    if rebuild:  # lectures may have been added since; keep what was already done
-        done = {l for day in c.get("plan", []) if day["done"] for l in day["lids"]}
-        todo = [l for l in library.course_lectures(ud, cid) if l not in done]
-        c["plan"] = [d for d in c.get("plan", []) if d["done"]] + library.make_plan(todo, exam, today)
-    lectures = ud.get("lectures", {})
-    lines = [f"🗓 <b>خطة مذاكرة {escape(c['name'])}</b> · ⏳ {library.countdown_text((exam - today).days)}"]
-    for day in c["plan"]:
-        d = dt.date.fromisoformat(day["date"])
-        mark = "✅" if day["done"] else "▫️"
-        what = "مراجعة شاملة + 🌙 ملخص ليلة الاختبار" if day["review"] else \
-            "، ".join(lectures.get(l, {}).get("title", "محاضرة") for l in day["lids"])
-        lines.append(f"{mark} <b>{library.day_name(d, today)}</b>: {escape(what)}")
-    rows = [[button("↩️ المادة", f"lib:c:{cid}")]]
-    await botkit.send_long(context, chat, "\n".join(lines), parse_mode=ParseMode.HTML,
-                           reply_markup=InlineKeyboardMarkup(rows))
-
-
-async def on_plan(update: Update, context, arg: str) -> None:
-    step, _, rest = arg.partition(":")
-    cid, _, i = rest.partition(":")
-    c = library.courses(context.user_data).get(cid)
-    if step == "done" and c and i.isdigit() and int(i) < len(c.get("plan", [])):
-        c["plan"][int(i)]["done"] = True
-        try:
-            await update.callback_query.edit_message_reply_markup(None)
-        except BadRequest:
-            pass
-        left = [d for d in c["plan"] if not d["done"]]
-        await context.bot.send_message(update.effective_chat.id,
-                                       "👏 أحسنت! " + (f"بقي في خطة «{c['name']}» " + botkit.count(len(left), "يوم واحد", "يومان", "أيام", "يوماً") + "." if left
-                                                       else f"أنهيت خطة «{c['name']}» كاملة. بالتوفيق في الاختبار!"))
-
-
 # ---------- exam-night summary ----------
 
 async def generate_exam(update: Update, context, lids: list[str]) -> None:
@@ -285,43 +217,37 @@ async def generate_exam(update: Update, context, lids: list[str]) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
-# ---------- glossary: the terms of a lecture or of a whole course ----------
-
-def _glossary_lines(lectures: list[dict]) -> list[str]:
-    seen, lines = set(), []
-    for lec in lectures:
-        for g in lec.get("glossary", []):
-            term = (g.get("term") or "").strip()
-            if term and term.lower() not in seen:
-                seen.add(term.lower())
-                meaning = " — ".join(x for x in (g.get("arabic", ""), g.get("explanation", "")) if x)
-                lines.append(f"• <b>{escape(term)}</b>: {escape(meaning)}")
-    return lines
-
-
-async def _send_lines(context, chat: int, head: str, lines: list[str]) -> None:
-    chunk = head
-    for line in lines:
-        if len(chunk) + len(line) > 3800:
-            await context.bot.send_message(chat, chunk, parse_mode=ParseMode.HTML)
-            chunk = ""
-        chunk += "\n" + line
-    await context.bot.send_message(chat, chunk, parse_mode=ParseMode.HTML)
-
+# ---------- the glossary of a whole course, in one file ----------
 
 async def on_course_terms(update: Update, context, cid: str) -> None:
-    ud, uid = context.user_data, update.effective_user.id
+    ud, uid, chat = context.user_data, update.effective_user.id, update.effective_chat.id
     course = library.courses(ud).get(cid)
     if not course:
         return
-    lectures = [lec for lec in (store.get(uid, ud, l) for l in library.course_lectures(ud, cid)) if lec]
-    lines = _glossary_lines(sorted(lectures, key=lambda l: l["time"]))
-    if not lines:
-        await context.bot.send_message(update.effective_chat.id, "لا توجد مصطلحات في محاضرات هذه المادة بعد.")
+    lectures = sorted((lec for lec in (store.get(uid, ud, l) for l in library.course_lectures(ud, cid)) if lec),
+                      key=lambda l: l["time"])
+    seen, terms = set(), []
+    for lec in lectures:
+        for g in lec.get("glossary", []):
+            key = (g.get("term") or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                terms.append(g)
+    if not terms:
+        await context.bot.send_message(chat, "لا توجد مصطلحات في محاضرات هذه المادة بعد.")
         return
-    await _send_lines(context, update.effective_chat.id,
-                      f"📖 <b>قاموس مادة «{escape(course['name'])}»</b> ("
-                      + botkit.count(len(lines), "مصطلح واحد", "مصطلحان", "مصطلحات", "مصطلحاً") + ")\n", lines)
+    work = Path(tempfile.mkdtemp(prefix="terms_", dir=botkit.work_root()))
+    try:
+        html = render.build_files({"title": course["name"], "glossary": terms}, [])["glossary"]
+        pdf = await asyncio.to_thread(render.write_pdf, html, work / f"مصطلحات المادة - {pipeline.safe_name(course['name'])}.pdf")
+        with open(pdf, "rb") as fh:
+            await context.bot.send_document(
+                chat, fh, filename=pdf.name,
+                caption=f"📖 مصطلحات مادة «{course['name']}»: "
+                        + botkit.count(len(terms), "مصطلح واحد", "مصطلحان", "مصطلحات", "مصطلحاً")
+                        + " من " + _lectures(len(lectures)) + ".")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------- search ----------
@@ -355,28 +281,10 @@ async def _search(update: Update, context, query: str) -> None:
                            reply_markup=InlineKeyboardMarkup(rows))
 
 
-# ---------- the daily reminder: countdowns, today's plan, cards due ----------
+# ---------- the daily reminder: the cards due today ----------
 
 def reminder_text(ud: dict, today: dt.date) -> tuple[str, list]:
     lines, rows = [], []
-    for cid, c in library.courses(ud).items():
-        left = library.days_left(c, today)
-        if left is not None and 0 <= left <= 30:
-            lines.append(f"⏳ {c['name']}: {library.countdown_text(left)}")
-    tasks = library.today_tasks(ud, today)
-    if tasks:
-        lines.append("\n📚 <b>خطة اليوم</b>")
-        lectures = ud.get("lectures", {})
-        for cid, i, day in tasks[:5]:
-            name = library.courses(ud)[cid]["name"]
-            if day["review"]:
-                lines.append(f"• {escape(name)}: مراجعة شاملة")
-                rows.append([button(f"🌙 ملخص ليلة اختبار {name}"[:60], f"lib:exam:{cid}")])
-            else:
-                titles = [lectures.get(l, {}).get("title", "") for l in day["lids"]]
-                lines.append(f"• {escape(name)}: " + "، ".join(escape(t) for t in titles))
-                rows += [[button("📖 " + lectures[l]["title"][:50], f"lib:l:{l}")] for l in day["lids"] if l in lectures]
-            rows.append([button(f"✅ أنجزت مهمة {name}"[:60], f"plan:done:{cid}:{i}")])
     due = study.due_cards(ud.get("deck", []))
     if due:
         lines.append(f"\n🔁 بطاقات المراجعة اليوم: {min(len(due), config.REVIEW_CARDS_PER_DAY)}")
@@ -410,8 +318,6 @@ def register(app) -> None:
     app.job_queue.run_repeating(daily_reminders, interval=600, first=60)
 
 
-botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "plan": on_plan,
-                       "glos": on_course_terms})
+botkit.BUTTONS.update({"lib": on_lib, "mvto": on_move_to, "mvnew": on_move_new, "glos": on_course_terms})
 botkit.LECTURE_BUTTONS.update({"mv": on_move})
-botkit.TEXT_INPUTS.update({"search": input_search, "exam_date": input_exam_date, "rename_course": input_rename,
-                           "new_course": input_new_course})
+botkit.TEXT_INPUTS.update({"search": input_search, "rename_course": input_rename, "new_course": input_new_course})

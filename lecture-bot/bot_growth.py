@@ -1,8 +1,4 @@
-"""Growth: statistics, invite links, the free hour, and the owner's tools.
-
-Every new student gets an hour of free recordings, and every REFERRALS_PER_CREDIT friends they bring
-add Stars to their wallet (see bot_wallet).
-"""
+"""Statistics, the free hour for new students, and the owner's tools."""
 import asyncio
 import datetime as dt
 import time
@@ -32,34 +28,10 @@ def _stats(ud: dict) -> dict:
                                    "review_days": []})
 
 
-# ---------- the free hour and referrals ----------
+# ---------- the free hour ----------
 
 def welcome_credits(ud: dict) -> None:
     bot_wallet.welcome(ud)
-
-
-async def referred(context, referrer: int, new_user: int) -> None:
-    if referrer == new_user or context.user_data.get("referred_by"):
-        return
-    context.user_data["referred_by"] = referrer
-    ref_ud = context.application.user_data[referrer]
-    refs = ref_ud.setdefault("refs", [])
-    if new_user in refs:
-        return
-    refs.append(new_user)
-    earned = len(refs) % config.REFERRALS_PER_CREDIT == 0
-    if earned:
-        bot_wallet.credit(ref_ud, bot_wallet.REFERRAL, "دعوة أصدقاء")
-    context.application.mark_data_for_update_persistence(user_ids=[referrer])
-    try:
-        text = "🎉 انضم صديق جديد إلى فَهيم من رابطك!"
-        if earned:
-            text += f" وأُضيف لرصيدك ⭐ {bot_wallet.REFERRAL} 🎁"
-        else:
-            text += f" صديق واحد آخر ويُضاف لرصيدك ⭐ {bot_wallet.REFERRAL} 🎁"
-        await context.bot.send_message(referrer, text)
-    except TelegramError:
-        pass
 
 
 def lecture_done(ud: dict, full: dict) -> None:
@@ -74,27 +46,6 @@ def reviewed(ud: dict) -> None:
     if t not in days:
         days.append(t)
         del days[:-60]
-
-
-async def start_referral(update: Update, context, referrer: str, new: bool) -> bool:
-    if new and referrer.isdigit():
-        welcome_credits(context.user_data)
-        await referred(context, int(referrer), update.effective_user.id)
-    return False  # carry on with the normal welcome
-
-
-async def invite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    ud = context.user_data
-    welcome_credits(ud)
-    link = f"https://t.me/{context.bot.username}?start=r_{update.effective_user.id}"
-    refs = len(ud.get("refs", []))
-    to_next = config.REFERRALS_PER_CREDIT - refs % config.REFERRALS_PER_CREDIT
-    await update.effective_message.reply_text(
-        f"🎁 <b>ادعُ أصدقاءك</b>\nكل {_friends(config.REFERRALS_PER_CREDIT)} ينضمون من رابطك = ⭐ {bot_wallet.REFERRAL} "
-        f"في محفظتك.\n\n{link}\n\n"
-        f"👥 انضم من رابطك: {refs}\n👛 رصيدك: ⭐ {bot_wallet.balance(ud)}\n"
-        f"⏭ باقي {_friends(to_next)} للهدية التالية",
-        parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
 # ---------- statistics ----------
@@ -131,10 +82,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     streak = _streak(s["review_days"], today)
     if streak:
         lines.append(f"🔥 أيام المراجعة المتتالية: {streak}")
-    exams = [(library.days_left(c, today), c["name"]) for c in library.courses(ud).values()]
-    exams = sorted((d, n) for d, n in exams if d is not None and d >= 0)
-    if exams:
-        lines += ["", "📅 <b>اختباراتك القادمة</b>"] + [f"• {escape(n)}: {library.countdown_text(d)}" for d, n in exams[:5]]
     weak = [(c / t, lid) for lid, (c, t) in s["by_lecture"].items() if t >= 3 and c / t < 0.6 and lid in lectures]
     rows = []
     if weak:
@@ -258,18 +205,16 @@ COMPARE_MODELS = (("Opus", "claude-opus-5-5", "claude-opus-5-5"),
 GROQ_DOLLARS_PER_HOUR = 0.111
 
 
-async def run_compare(context, chat_id: int, status, sources, work, major, images, mats, lang: str = "ar") -> None:
+async def run_compare(context, chat_id: int, status, sources, work, major, images, mats) -> None:
     """Transcribe once, write the notes and questions with each model, send both PDFs with their costs."""
     await status.edit_text("🔬 مقارنة: أحوّل الكلام إلى نص…")
-    segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats,
-                                                        None, lang)
+    segments, duration, parts = await asyncio.to_thread(pipeline.transcribe_sources, sources, major, mats)
     await status.edit_text("🔬 مقارنة: يكتب النموذجان الملخص والأسئلة في الوقت نفسه… (دقائق)")
 
     async def one(label, model, questions_model):
         started = time.time()
         result = await asyncio.to_thread(analyze.analyze, segments, major=major, images=images, duration=duration,
-                                         materials=mats, parts=parts, model=model, questions_model=questions_model,
-                                         lang=lang)
+                                         materials=mats, parts=parts, model=model, questions_model=questions_model)
         res = await asyncio.to_thread(pipeline.finish, result, segments, work, sources[0], duration, f"-{label}")
         return label, res, time.time() - started
 
@@ -302,9 +247,7 @@ def register(app) -> None:
     app.add_handler(CommandHandler("owner", owner_cmd))
     app.add_handler(CommandHandler("compare", compare_cmd))
     app.add_handler(CommandHandler("cookies", cookies_cmd))
-    for name, fn in (("stats", stats_cmd), ("invite", invite_cmd)):
-        app.add_handler(CommandHandler(name, fn))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.job_queue.run_repeating(_prune_job, interval=86400, first=3600)
 
 
-botkit.START_LINKS.update({"r": start_referral})

@@ -1,7 +1,6 @@
-"""A student's library: courses (folders), search across lectures, exam dates and study plans.
+"""A student's library: courses (folders) and search across lectures.
 Pure functions over the student's data, so they are easy to test."""
 import datetime as dt
-import math
 import re
 import uuid
 
@@ -98,70 +97,7 @@ def _snippet(text: str, words: list[str], width: int = 160) -> str:
     return ("…" if start > 0 else "") + piece + ("…" if start + width < len(text) else "")
 
 
-# ---------- exam dates and study plans ----------
-
-def parse_date(text: str, today: dt.date) -> dt.date | None:
-    """'2026-11-20', '20/11/2026', '20/11', 'بعد 10 أيام', 'غداً'. Day/month order as used in Arabic."""
-    t = normalize(text)
-    if t in ("غدا", "بكره", "بكرة"):
-        return today + dt.timedelta(days=1)
-    if t in ("بعد غد", "بعد بكره"):
-        return today + dt.timedelta(days=2)
-    m = re.search(r"بعد\s+(\d+)\s*(يوم|ايام|اسبوع|اسابيع)", t)
-    if m:
-        n = int(m.group(1))
-        return today + dt.timedelta(days=n * (7 if m.group(2).startswith("اس") else 1))
-    m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", t)
-    try:
-        if m:
-            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        m = re.search(r"(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?", t)
-        if m:
-            day, month = int(m.group(1)), int(m.group(2))
-            year = int(m.group(3)) if m.group(3) else today.year
-            year += 2000 if year < 100 else 0
-            d = dt.date(year, month, day)
-            if not m.group(3) and d < today:  # "20/1" in December means next January
-                d = dt.date(year + 1, month, day)
-            return d
-    except ValueError:
-        return None
-    return None
-
-
-def days_left(course: dict, today: dt.date) -> int | None:
-    if not course.get("exam"):
-        return None
-    return (dt.date.fromisoformat(course["exam"]) - today).days
-
-
-def make_plan(lecture_ids: list[str], exam: dt.date, today: dt.date) -> list[dict]:
-    """Spread the course's lectures over the days before the exam; the day before is for a full review."""
-    days = (exam - today).days
-    if days <= 1 or not lecture_ids:
-        return [{"date": today.isoformat(), "lids": list(lecture_ids), "review": True, "done": False}]
-    study_days = days - 1
-    per_day = max(1, math.ceil(len(lecture_ids) / study_days))
-    chunks = [lecture_ids[i:i + per_day] for i in range(0, len(lecture_ids), per_day)]
-    # Spread the study days evenly, leaving rest days in between when there is time to spare.
-    plan = [{"date": (today + dt.timedelta(days=j * study_days // len(chunks))).isoformat(), "lids": chunk,
-             "review": False, "done": False} for j, chunk in enumerate(chunks)]
-    plan.append({"date": (exam - dt.timedelta(days=1)).isoformat(), "lids": [], "review": True, "done": False})
-    return plan
-
-
-def today_tasks(ud: dict, today: dt.date) -> list[tuple[str, int, dict]]:
-    """(course id, index in plan, plan day) for every plan day due today or overdue and not done."""
-    out = []
-    t = today.isoformat()
-    for cid, c in courses(ud).items():
-        if c.get("exam") and c["exam"] < t:
-            continue  # the exam has passed
-        for i, day in enumerate(c.get("plan", [])):
-            if day["date"] <= t and not day["done"]:
-                out.append((cid, i, day))
-    return out
-
+# ---------- dates ----------
 
 def day_name(d: dt.date, today: dt.date) -> str:
     if d == today:
@@ -169,13 +105,3 @@ def day_name(d: dt.date, today: dt.date) -> str:
     if d == today + dt.timedelta(days=1):
         return "غداً"
     return f"{WEEKDAYS[d.weekday()]} {d.day}/{d.month}"
-
-
-def countdown_text(n: int) -> str:
-    if n == 0:
-        return "الاختبار اليوم"
-    if n == 1:
-        return "الاختبار غداً"
-    if n == 2:
-        return "باقي يومان"
-    return f"باقي {n} " + ("أيام" if n <= 10 else "يوماً")

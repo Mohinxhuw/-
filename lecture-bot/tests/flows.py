@@ -105,12 +105,8 @@ ANALYSIS = {
 RUNS = []
 
 
-LANGS = []
-
-
-def fake_run(sources, work, *a, lang="ar", **kw):
+def fake_run(sources, work, *a, **kw):
     RUNS.append(len(sources))
-    LANGS.append(lang)
     files = {}
     for kind in ("summary", "questions", "glossary", "visuals"):
         files[kind] = work / f"{kind}.pdf"
@@ -136,7 +132,7 @@ def fake_run_files(work, title, *a, **kw):
 pipeline.run_files = fake_run_files
 DURATION = [3600.0]
 pipeline.probe_duration = lambda path: DURATION[0]
-pipeline.transcribe_sources = lambda sources, major, mats, stage=None, lang="ar": ([], 1200.0, [(0, "")])
+pipeline.transcribe_sources = lambda sources, major, mats, stage=None: ([], 1200.0, [(0, "")])
 analyze.analyze = lambda segs, **kw: dict(ANALYSIS, _usage={"cost": 0.3 if "opus" in kw["model"] else 0.15,
                                                             "input": 1000, "output": 500})
 study.ask = lambda lec, q, h=None: f"جواب: {q}"
@@ -218,20 +214,12 @@ async def main():
         assert ud["courses"][cid]["name"] == "أحياء"
         last(A, "حُفظت في مادة")
 
-        # library, search, exam date, plan
+        # library and search
         await send(cmd(A, "/library"))
         await send(press(A, f"lib:c:{cid}"))
         await send(press(A, f"lib:l:{lid}"))
         await send(cmd(A, "/search الميتوكوندريا"))
         assert "الميتوكوندريا" in last(A, "نتائج")["text"]
-        await send(press(A, f"lib:date:{cid}"))
-        await send(msg(A, text="بعد 5 أيام"))
-        assert ud["courses"][cid]["exam"], "exam date set"
-        last(A, "خطة مذاكرة")
-        text, rows = bot.bot_library.reminder_text(ud, study.today())
-        assert "خطة اليوم" in text and "باقي 5 أيام" in text, text
-        await send(press(A, f"plan:done:{cid}:0"))
-        assert ud["courses"][cid]["plan"][0]["done"]
         await send(press(A, f"mv:{lid}"))
         await send(press(A, f"mvnew:{lid}"))
         await send(msg(A, text="فسيولوجي"))
@@ -263,19 +251,7 @@ async def main():
         token = last(A, "?start=s_")["text"].split("start=s_")[1].split()[0]
         await send(cmd(B, f"/start s_{token}"))
         assert len(app.user_data[B]["lectures"]) == 1, "B got the lecture"
-        assert app.user_data[A]["refs"] == [B], "referral counted"
         last(B, "شاركك سارة")
-
-        # groups: A creates, B joins, A sends a lecture to the group
-        await send(cmd(A, "/groups"))
-        await send(press(A, "grp:new:"))
-        await send(msg(A, text="أحياء - دفعة 2026"))
-        gid = app.user_data[A]["groups"][0]
-        await send(cmd(B, f"/start g_{gid}"))
-        assert B in app.bot_data["groups"][gid]["members"]
-        await send(press(A, f"tog:{lid}:{gid}"))
-        assert len(app.user_data[B]["lectures"]) == 2, "group delivery"
-        last(A, "عضو واحد")
 
         # quiz answers feed the statistics
         POLLS.clear()
@@ -283,8 +259,6 @@ async def main():
         await send(answer(A, POLLS[-1], 1))
         await send(cmd(A, "/stats"))
         assert "1 صحيحة من 1" in last(A, "إحصاءاتك")["text"]
-        await send(cmd(A, "/invite"))
-        last(A, "ادعُ أصدقاءك")
 
         # old-format lecture (kept in memory by an earlier version) moves to disk when opened
         app.user_data[A]["lectures"]["old1"] = dict(ANALYSIS, transcript="[00:00] قديم", time=1.0)
@@ -308,21 +282,6 @@ async def main():
         await asyncio.sleep(0.3)
         assert RUNS[-1] == "files"
         last(A, "فصل الخلية")
-
-        # automatic group sharing: asked once, then automatic
-        n_b = len(app.user_data[B]["lectures"])
-        await send(msg(A, voice={"file_id": "v3", "file_unique_id": "c3", "duration": 5}))
-        await send(press(A, "go:"))
-        await asyncio.sleep(0.5)
-        yes = find_button(A, f"gl:{gid}:")
-        assert yes.endswith(":y") or yes.endswith(":n")
-        await send(press(A, yes.rsplit(":", 1)[0] + ":y"))
-        assert len(app.user_data[B]["lectures"]) == n_b + 1, "sent after saying yes"
-        await send(msg(A, voice={"file_id": "v4", "file_unique_id": "c4", "duration": 5}))
-        await send(press(A, "go:"))
-        await asyncio.sleep(0.5)
-        assert len(app.user_data[B]["lectures"]) == n_b + 2, "sent automatically"
-        last(A, "أرسلتها تلقائياً")
 
         # course quiz
         acid = app.user_data[A]["lectures"][max(app.user_data[A]["lectures"],
@@ -418,22 +377,24 @@ async def main():
         assert cu["stars"] == 5 - 275 and not cu["payments"]
         await send(cmd(T, "/billing off"))
 
-        # a lecture taught in English: the language button, then the glossary instead of the English PDF
+        # a new lecture; the course glossary arrives as one file
         await send(msg(A, voice={"file_id": "v8", "file_unique_id": "c8", "duration": 5}))
-        assert "lang:" in last(A, "استلمت")["buttons"]
-        await send(press(A, "lang:"))
-        assert app.user_data[A]["lecture_lang"] == "en"
+        assert "lang:" not in last(A, "استلمت")["buttons"]
         await send(press(A, "go:"))
         await asyncio.sleep(0.5)
-        assert LANGS[-1] == "en"
         elid = max(app.user_data[A]["lectures"], key=lambda k: app.user_data[A]["lectures"][k]["time"])
-        assert app.user_data[A]["lectures"][elid]["lang"] == "en"
-        assert f"en:{elid}" not in last(A, "حُفظت في مادة")["buttons"], "no English version of an English lecture"
-        await send(press(A, "lang:"))  # (no collector open: just switches back)
-        assert app.user_data[A]["lecture_lang"] == "ar"
         ecid = app.user_data[A]["lectures"][elid]["course"]
         await send(press(A, f"glos:{ecid}"))
-        last(A, "قاموس مادة")
+        assert "مصطلح واحد" in last(A, "📖 مصطلحات مادة")["caption"]
+
+        # a lecture saved before the files were split gets all its files when opened from the library
+        meta = app.user_data[A]["lectures"][elid]
+        meta.pop("files")
+        n_sent = len(SENT)
+        await send(press(A, f"lib:l:{elid}"))
+        groups = [p for ch, n, p in SENT[n_sent:] if ch == A and n == "sendMediaGroup"]
+        assert groups and groups[0]["files"] >= 3, groups
+        assert "questions" in meta["files"]
 
         # the proof behind an answer
         POLLS.clear()

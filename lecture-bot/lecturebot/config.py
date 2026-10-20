@@ -68,7 +68,6 @@ REVIEW_CARDS_PER_DAY = int(os.environ.get("REVIEW_CARDS_PER_DAY", "25"))
 
 # The Stars wallet: charging starts when BILLING_ENABLED=true (or the owner sends /billing on).
 BILLING_ENABLED = _bool("BILLING_ENABLED")
-REFERRALS_PER_CREDIT = int(os.environ.get("REFERRALS_PER_CREDIT", "2"))  # friends invited per referral reward
 
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/tmp/lecturebot"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))

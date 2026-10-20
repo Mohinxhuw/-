@@ -56,8 +56,6 @@ WELCOME = (
     "   ليس لها تسجيل؟ أرسل شرائحها أو صور صفحات الكتاب وحدها.\n"
     "٢. أرفق شرائح المحاضرة إن وُجدت، ليكون الملخص أدق.\n"
     "٣. استلم ملخصك خلال دقائق.\n\n"
-    "🌐 محاضراتك بالإنجليزية؟ اضغط «لغة المحاضرة» تحت التسجيل، فأشرحها لك بالعربي "
-    "وتبقى المصطلحات والأسئلة بالإنجليزية كما في الاختبار.\n\n"
     "بقية الأوامر في زر القائمة ☰ أسفل الشاشة."
 )
 
@@ -67,9 +65,7 @@ COMMANDS = [
     ("review", "مراجعة بطاقات اليوم"),
     ("exam", "ملخص ليلة الاختبار"),
     ("search", "البحث في محاضراتي"),
-    ("groups", "مجموعات الدراسة"),
     ("wallet", "محفظتي والأسعار"),
-    ("invite", "ادعُ أصدقاءك"),
     ("stats", "إحصاءاتي"),
     ("reminder", "وقت التذكير اليومي"),
     ("privacy", "الخصوصية"),
@@ -174,7 +170,7 @@ class SectionSender:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     new = not context.user_data.get("seen")
     context.user_data["seen"] = True
-    if context.args:  # t.me/<bot>?start=<prefix>_<value>: shared lecture, group invite, referral
+    if context.args:  # t.me/<bot>?start=<prefix>_<value>: shared lecture
         prefix, _, value = context.args[0].partition("_")
         handler = botkit.START_LINKS.get(prefix)
         if handler and await handler(update, context, value, new):
@@ -213,11 +209,8 @@ def _collector_text(ud: dict) -> str:
     return "\n".join(lines)
 
 
-def _collect_kb(ud: dict) -> InlineKeyboardMarkup:
-    lang = "English 🇬🇧" if ud.get("lecture_lang") == "en" else "العربية"
-    return InlineKeyboardMarkup([[InlineKeyboardButton("▶️ ابدأ الآن", callback_data="go:"),
-                                  InlineKeyboardButton("✖️ إلغاء", callback_data="cancel:")],
-                                 [InlineKeyboardButton(f"🌐 لغة المحاضرة: {lang}", callback_data="lang:")]])
+_COLLECT_KB = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ ابدأ الآن", callback_data="go:"),
+                                     InlineKeyboardButton("✖️ إلغاء", callback_data="cancel:")]])
 
 
 async def _refresh_collector(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
@@ -229,7 +222,7 @@ async def _refresh_collector(context: ContextTypes.DEFAULT_TYPE, chat_id: int, u
             await context.bot.delete_message(chat_id, old)
         except TelegramError:
             pass
-    msg = await context.bot.send_message(chat_id, _collector_text(ud), reply_markup=_collect_kb(ud))
+    msg = await context.bot.send_message(chat_id, _collector_text(ud), reply_markup=_COLLECT_KB)
     ud["collector_msg"] = msg.message_id
     for job in context.job_queue.get_jobs_by_name(f"start:{user_id}"):
         job.schedule_removal()
@@ -351,7 +344,7 @@ def _full_from(result) -> dict:
     full = {key: a.get(key, []) for key in ("mcq", "true_false", "essay", "flashcards", "sections", "glossary",
                                             "divisions", "processes", "comparisons")}
     full.update(title=a.get("title", ""), subject=a.get("subject", ""), overview=a.get("overview", ""),
-                transcript=result.transcript_text, ndiv=len(a.get("divisions", [])), lang=result.extra.get("lang", "ar"),
+                transcript=result.transcript_text, ndiv=len(a.get("divisions", [])),
                 duration=result.extra.get("duration", 0), source_url=result.source.url or "")
     return full
 
@@ -381,7 +374,6 @@ async def _save_and_send(context, chat_id: int, user_id: int, full: dict, paths:
     if ids:
         lectures[lid]["files"] = full["files"] = ids
         lectures[lid]["pdf_file_id"] = full["pdf_file_id"] = ids.get("summary")
-    await bot_share.auto_share(context, user_id, lid)
     return lid
 
 
@@ -424,10 +416,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
     compare = ud.pop("compare_next", False) and botkit.is_owner(context, user_id)
 
     # The same recording was processed before (for anyone): reuse it.
-    lang = "en" if ud.get("lecture_lang") == "en" else "ar"
     key = cache.key_for(parts)
-    if key and lang == "en":
-        key += "-en"
     cached = None if compare else cache.get(key)
     if cached and cached.get("pdf_file_id"):
         if not await bot_wallet.require(context, chat_id, ud, bot_wallet.RECEIVE, "هذه المحاضرة (سبق تلخيصها)"):
@@ -482,7 +471,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
                     return
             images, mats = await _download_extras(context, chat_id, images_meta, docs_meta)
             if compare:
-                await bot_growth.run_compare(context, chat_id, status, sources, work, major, images, mats, lang)
+                await bot_growth.run_compare(context, chat_id, status, sources, work, major, images, mats)
                 return
 
             duration = sum(s.duration or pipeline.probe_duration(s.path) for s in sources)
@@ -499,8 +488,7 @@ async def _run_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: in
             sender = SectionSender(context.bot, chat_id, loop)
             await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
             result = await asyncio.to_thread(pipeline.run, sources, work, major, images, progress.update,
-                                             None, mats, sender, lang=lang)
-            result.extra["lang"] = lang
+                                             None, mats, sender)
             await asyncio.sleep(1)  # let the last streamed section go out first
             async with sender.lock:
                 pass
@@ -549,10 +537,7 @@ async def _run_files_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
         loop = asyncio.get_running_loop()
         sender = SectionSender(context.bot, chat_id, loop)
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-        lang = "en" if ud.get("lecture_lang") == "en" else "ar"
-        result = await asyncio.to_thread(pipeline.run_files, work, title, None, images, mats, None, sender,
-                                         lang=lang)
-        result.extra["lang"] = lang
+        result = await asyncio.to_thread(pipeline.run_files, work, title, None, images, mats, None, sender)
         await asyncio.sleep(1)
         async with sender.lock:
             pass
@@ -579,17 +564,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if action == "go":
         await _run_job(context, chat_id, update.effective_user.id)
-        return
-    if action == "lang":
-        ud = context.user_data
-        ud["lecture_lang"] = "ar" if ud.get("lecture_lang") == "en" else "en"
-        try:
-            await q.edit_message_reply_markup(_collect_kb(ud))
-        except BadRequest:
-            pass
-        await context.bot.send_message(
-            chat_id, "🌐 تم: محاضراتك بالإنجليزية. أشرحها لك بالعربي، وتبقى المصطلحات والأسئلة بالإنجليزية كما في الاختبار."
-            if ud["lecture_lang"] == "en" else "🌐 تم: محاضراتك بالعربية.")
         return
     if action == "files":
         try:

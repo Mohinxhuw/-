@@ -31,15 +31,11 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 
 
 def lecture_keyboard(lid: str, meta: dict | None = None) -> InlineKeyboardMarkup:
-    """The buttons under a lecture's files. meta: the lecture's details (an English lecture needs no
-    English version)."""
-    third = [button("⋯ المزيد", f"more:{lid}")]
-    if (meta or {}).get("lang") != "en":
-        third.insert(0, button("🌐 English", f"en:{lid}"))
+    """The buttons under a lecture's files."""
     return InlineKeyboardMarkup([
         [button("🧪 اختبرني", f"quiz:{lid}"), button("🃏 البطاقات", f"cards:{lid}")],
         [button("💡 اشرح لي أبسط", f"simp:{lid}")],
-        third,
+        [button("🌐 English", f"en:{lid}"), button("⋯ المزيد", f"more:{lid}")],
     ])
 
 
@@ -48,8 +44,6 @@ def more_keyboard(lid: str, ud: dict) -> InlineKeyboardMarkup:
         [button("📤 Word", f"docx:{lid}"), button("📝 Notion", f"md:{lid}")],
         [button("📁 نقل لمادة أخرى", f"mv:{lid}"), button("🔗 شاركها مع زميل", f"share:{lid}")],
     ]
-    if ud.get("groups"):
-        rows.append([button("👥 أرسلها لمجموعة", f"tog:{lid}")])
     rows.append([button("🗑 حذف", f"del:{lid}")])
     return InlineKeyboardMarkup(rows)
 

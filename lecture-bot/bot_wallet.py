@@ -19,7 +19,7 @@ from lecturebot import config
 
 # Prices in Stars (a student pays about 2 US cents per Star; about 1.3 cents reaches the owner).
 UPLOAD_PER_MINUTE = 1.5     # processing a new recording
-RECEIVE = 5                 # a lecture from a classmate, a group, or a recording processed before
+RECEIVE = 5                 # a lecture from a classmate, or a recording processed before
 FILES = 60                  # a lecture made of slides / book pages only
 EXPLAIN = 10                # "explain it more simply", per part
 ESSAY = 5                   # grading an essay answer, after ESSAY_FREE free ones per lecture
@@ -27,7 +27,6 @@ ESSAY_FREE = 2
 ENGLISH = 30                # the English PDF
 EXAM = 50                   # the exam-night summary
 CASHBACK = 1                # to the student whose lecture a classmate receives
-REFERRAL = 60               # for every REFERRALS_PER_CREDIT friends who join from the student's link
 FREE_MINUTES = 60           # every new student's first hour of recordings
 FREE_RECEIVES = 3           # and their first lectures from classmates
 PACKS = [(100, 0), (250, 25), (500, 75), (1000, 200)]  # (Stars paid, bonus Stars)
@@ -105,7 +104,7 @@ async def can_start(context, chat_id: int, ud: dict) -> bool:
 
 def price_list() -> str:
     return (f"• محاضرة جديدة: ⭐ {UPLOAD_PER_MINUTE:g} للدقيقة (⭐ {math.ceil(60 * UPLOAD_PER_MINUTE)} للساعة)\n"
-            f"• محاضرة من زميل أو مجموعة: ⭐ {RECEIVE}\n"
+            f"• محاضرة من زميل: ⭐ {RECEIVE}\n"
             f"• ملخص من الشرائح أو الكتاب: ⭐ {FILES}\n"
             f"• اشرح لي أبسط: ⭐ {EXPLAIN}\n"
             f"• تصحيح سؤال مقالي: أول {ESSAY_FREE} لكل محاضرة مجاناً، ثم ⭐ {ESSAY}\n"
@@ -125,8 +124,7 @@ async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not enabled(context):
         lines.append("\n(فَهيم مجاني حالياً، ولا يُخصم شيء من رصيدك.)")
     lines += ["", "<b>الأسعار</b>", price_list(), "",
-              f"🎁 كل زميل يستلم محاضرة رفعتها يضيف ⭐ {CASHBACK} لرصيدك، "
-              f"وكل صديقين يدخلان من رابطك (/invite) يضيفان ⭐ {REFERRAL}.", "", "<b>اشحن رصيدك</b>:"]
+              f"🎁 كل زميل يستلم محاضرة شاركتها معه يضيف ⭐ {CASHBACK} لرصيدك.", "", "<b>اشحن رصيدك</b>:"]
     await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=_packs_keyboard())
 
 
