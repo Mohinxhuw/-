@@ -51,15 +51,15 @@ img.mindmap { max-width: 100%; max-height: 95mm; border: 0.6pt solid #cfd8e1; bo
              min-width: 14pt; text-align: center; margin-inline-end: 4pt; }
 .arrow { text-align: center; color: #e3b448; font-size: 12pt; line-height: 1.2; }
 .cycle { text-align: center; font-weight: 700; color: #143f62; }
-.warn { color: #c62828; font-size: 12pt; font-weight: 700; text-align: center; border: 1pt solid #c62828;
-        border-radius: 4pt; padding: 4pt 8pt; margin: 6pt 0 10pt; }
+.warn { color: #c62828; font-size: 10.5pt; font-weight: 700; text-align: center; margin: 0 0 8pt; }
 .glossary td.term { font-weight: 700; width: 24%; }
-.glossary .lect { font-size: 8.5pt; color: #2e7d32; }
-.glossary .ext { font-size: 8.5pt; color: #7a5b00; }
+tr.pb { break-before: page; }
 .glossary .none { color: #7a8796; }
-sup.fn { color: #7a5b00; font-weight: 700; }
-.footnotes { font-size: 9pt; border-top: 0.8pt solid #cfd8e1; margin-top: 10pt; padding-top: 4pt; }
-.footnotes a { color: #143f62; word-break: break-all; }
+@page { @footnote { border-top: 0.6pt solid #cfd8e1; padding-top: 3pt; } }
+.fn { float: footnote; font-size: 8.5pt; line-height: 1.5; color: #4a5866; }
+.fn a { color: #143f62; word-break: break-all; }
+.fn::footnote-call { content: attr(data-n); vertical-align: super; font-size: 7.5pt; font-weight: 700; color: #7a5b00; }
+.fn::footnote-marker { content: attr(data-n) ". "; font-weight: 700; }
 .term-hl { color: #2e7d32; font-weight: 700; }
 .def-hl { background: #e6e9ed; border-radius: 2pt; }
 """
@@ -84,9 +84,8 @@ LABELS = {
            "true": "صح", "false": "خطأ", "cards": "بطاقات المراجعة", "card_q": "السؤال", "card_a": "الجواب",
            "transcript": "النص الكامل", "letters": "أبجدهوزحطي",
            "processes": "المراحل والخطوات", "back_to": "ثم تعود الدورة إلى:", "definition": "التعريف",
-           "from_lecturer": "تعريف المحاضر", "from_source": "من مصدر خارجي موثوق (المرجع في الحاشية)",
-           "sources": "المراجع", "glossary_note": "تعريف المحاضر مكتوب كما ذكره. وما لم يعرّفه نُقل تعريفه من "
-           "مصدر موثوق ومرجعه في الحاشية، وما لم يُعثر له على تعريف موثوق وُضع أمامه خط.",
+           "glossary_note": "تعريف المحاضر مكتوب كما ذكره، وما لم يعرّفه نُقل تعريفه من مصدر موثوق "
+           "ومرجعه في حاشية الصفحة، وما لم يُعثر له على تعريف موثوق وُضع أمامه خط.",
            "transcript_note": "المصطلحات ملوّنة بالأخضر، وتعريف المحاضر لها مظلَّل بالرمادي.",
            "visuals_warning": "صُممت هذه التقاسيم بـAI بالاعتماد على ما أرسلته، والخطأ وارد، فتنبّه."},
     "en": {"summary_title": "Lecture summary", "duration": "Duration", "source": "Source",
@@ -98,8 +97,7 @@ LABELS = {
            "tf": "True or false", "true": "True", "false": "False", "cards": "Flashcards", "card_q": "Question",
            "card_a": "Answer", "transcript": "Full transcript", "letters": "ABCDEFGHIJ",
            "processes": "Stages and steps", "back_to": "Then the cycle returns to:", "definition": "Definition",
-           "from_lecturer": "The lecturer's definition", "from_source": "From a trusted source (see the notes)",
-           "sources": "Sources", "glossary_note": "", "transcript_note": "",
+           "glossary_note": "", "transcript_note": "",
            "visuals_warning": "These diagrams were made by AI from your lecture and may contain mistakes."},
 }
 
@@ -208,18 +206,17 @@ def _glossary(result: dict, L: dict, source_url: str = "") -> list[str]:
         text, src = term_definition(g)
         if src:
             notes.append(src)
-            cell = f'{e(text)}<sup class="fn">{len(notes)}</sup><div class="ext">{L["from_source"]}</div>'
+            # A footnote at the bottom of its page; write_pdf numbers them from 1 on every page.
+            cell = (f'{e(text)}<span class="fn" data-id="{len(notes)}" data-n="{len(notes)}">'
+                    f'{e(src.get("source") or "")} <a href="{e(src["url"])}">{e(src["url"])}</a></span>')
         elif text:
-            cell = f'{e(text)} {_t(g.get("time", ""), source_url)}<div class="lect">{L["from_lecturer"]}</div>'
+            cell = f'{e(text)} {_t(g.get("time", ""), source_url)}'
         else:
             cell = '<span class="none">—</span>'
-        parts.append(f'<tr><td class="term"{_dir(g.get("term", ""))}>{e(g.get("term", ""))}</td>'
+        row = f'<tr data-fn="{len(notes)}">' if src else "<tr>"
+        parts.append(f'{row}<td class="term"{_dir(g.get("term", ""))}>{e(g.get("term", ""))}</td>'
                      + (f'<td>{e(g.get("arabic", ""))}</td>' if with_arabic else "") + f"<td>{cell}</td></tr>")
     parts.append("</table>")
-    if notes:
-        parts.append(f'<div class="footnotes"><b>{L["sources"]}</b><ol>'
-                     + "".join(f'<li>{e(n.get("source") or n["url"])}: <a href="{e(n["url"])}">{e(n["url"])}</a></li>'
-                               for n in notes) + "</ol></div>")
     return parts
 
 
@@ -344,16 +341,53 @@ def build_files(result: dict, paragraphs: list[Segment], source_title: str = "",
                                                                        result.get("glossary")),
               "questions": _questions(result, L, source_url),
               "glossary": _glossary(result, L, source_url),
-              "visuals": [f'<div class="warn">{L["visuals_warning"]}</div>'] + visuals if visuals else []}
+              "visuals": visuals}
     names = dict(FILES)
-    return {kind: _page(_header(result, L, source_title, duration, names[kind]) + body)
+    return {kind: _page(([f'<div class="warn">{L["visuals_warning"]}</div>'] if kind == "visuals" else [])
+                        + _header(result, L, source_title, duration, names[kind]) + body)
             for kind, body in bodies.items() if body}
+
+
+def _number_footnotes_per_page(html: str) -> str:
+    """Number footnotes from 1 on every page. The document is laid out to see where each footnote
+    falls; a row whose footnote would be pushed to the next page starts that page instead, so a
+    number and its note are always on the same page."""
+    import re
+    from weasyprint import HTML
+
+    def walk(box):
+        yield box
+        for child in getattr(box, "children", None) or []:
+            yield from walk(child)
+
+    for _ in range(8):
+        calls, notes = {}, {}
+        for i, page in enumerate(HTML(string=html, base_url=str(config.BASE_DIR)).render().pages):
+            areas = [b for b in walk(page._page_box) if type(b).__name__ == "FootnoteAreaBox"]
+            in_area = {id(b) for a in areas for b in walk(a)}
+            for box in walk(page._page_box):
+                el = getattr(box, "element", None)
+                if el is not None and el.get("class") == "fn":
+                    (notes if id(box) in in_area else calls).setdefault(el.get("data-id"), i)
+        late = [k for k, page in calls.items() if notes.get(k, page) != page]
+        if not late:
+            break
+        k = min(late, key=int)
+        html = html.replace(f'<tr data-fn="{k}">', f'<tr data-fn="{k}" class="pb">', 1)
+    numbers, count = {}, {}
+    for k in sorted(notes, key=int):
+        count[notes[k]] = count.get(notes[k], 0) + 1
+        numbers[k] = count[notes[k]]
+    return re.sub(r'data-id="(\d+)" data-n="\d+"',
+                  lambda m: f'data-id="{m.group(1)}" data-n="{numbers.get(m.group(1), m.group(1))}"', html)
 
 
 def write_pdf(html: str, out_path: Path) -> Path:
     from weasyprint import HTML
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if 'class="fn"' in html:
+        html = _number_footnotes_per_page(html)
     HTML(string=html, base_url=str(config.BASE_DIR)).write_pdf(str(out_path))
     return out_path
 
