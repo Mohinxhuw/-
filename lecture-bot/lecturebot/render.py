@@ -51,7 +51,7 @@ img.mindmap { max-width: 100%; max-height: 95mm; border: 0.6pt solid #cfd8e1; bo
              min-width: 14pt; text-align: center; margin-inline-end: 4pt; }
 .arrow { text-align: center; color: #e3b448; font-size: 12pt; line-height: 1.2; }
 .cycle { text-align: center; font-weight: 700; color: #143f62; }
-.warn { color: #c62828; font-size: 10.5pt; font-weight: 700; text-align: center; margin: 0 0 8pt; }
+.warn { color: #c62828; font-size: 10.5pt; font-weight: 700; text-align: center; margin: -10mm 0 8pt; }
 .glossary td.term { font-weight: 700; width: 24%; }
 tr.pb { break-before: page; }
 .glossary .none { color: #7a8796; }
